@@ -4,7 +4,6 @@ import argparse
 import csv
 from urllib.parse import urlparse
 import urllib3
-from bs4 import BeautifulSoup
 
 DATA_DIR = "data"
 HEADERS = {
@@ -27,52 +26,32 @@ def fetch_html_and_js(url):
         resp = requests.get(url, headers=HEADERS, timeout=10, verify=False)
         html = resp.text
         status_code = resp.status_code
-        soup = BeautifulSoup(html, 'html.parser')
-        js_scripts = []
-        # Inline JS
-        for script in soup.find_all('script'):
-            if script.string:
-                js_scripts.append(script.string)
-            elif script.get('src'):
-                src = script['src']
-                js_url = src if src.startswith('http') else urlparse(url)._replace(path=src).geturl()
-                try:
-                    js_resp = requests.get(js_url, headers=HEADERS, timeout=5, verify=False)
-                    js_scripts.append(js_resp.text)
-                except Exception as e:
-                    js_scripts.append(f"// Error fetching {src}: {e}")
-        return html, js_scripts, status_code
+
+        return html, status_code
     except Exception as e:
         print(f"Error fetching {url}: {e}")
         raise Exception(f"Failed to fetch {url}: {e}")
 
-def save_data(url, html, js, status_code):
+def save_data(url, html, status_code):
     safe_url = url.replace('://', '_').replace('/', '_')
     if status_code >= 400:
         entry = {
             'url': url,
             'status_code': status_code,
             'html_file': '',
-            'js_files': '',
             'error': False,
             'error_message': ''
         }
     else:
-        js_files = f'{safe_url}_js.js'
         entry = {
             'url': url,
             'status_code': status_code,
             'html_file': f'{safe_url}.html',
-            'js_files': js_files,
             'error': False,
             'error_message': ''
         }
         with open(os.path.join(DATA_DIR, f'{safe_url}.html'), 'w', encoding='utf-8') as f:
             f.write(html)
-        if len(js) > 0:
-            with open(os.path.join(DATA_DIR, f'{safe_url}.js'), 'w', encoding='utf-8') as f:
-                for js_code in js:
-                    f.write(js_code)
 
     return entry
 
@@ -103,24 +82,24 @@ def main():
     for idx, url in enumerate(urls[:total]):
         print(f"[{idx+1}/{total}] Processing: {url}")
         try:
-            html, js, status_code = fetch_html_and_js(url)
-            entry = save_data(url=url, html=html, js=js, status_code=status_code)
+            html, status_code = fetch_html_and_js(url)
+            entry = save_data(url=url, html=html, status_code=status_code)
+            metadata_entries.append(entry)
         except Exception as e:
             print(f"Error processing {url}: {e}")
             entry = {
                 'url': url,
                 'status_code': None,
                 'html_file': '',
-                'js_files': '',
                 'error': True,
                 'error_message': str(e)
             }
-        metadata_entries.append(entry)
+            metadata_entries.append(entry)
     
     csv_file = os.path.join(DATA_DIR, 'metadata.csv')
     if metadata_entries:
         with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=['url', 'status_code', 'html_file', 'js_files'])
+            writer = csv.DictWriter(f, fieldnames=['url', 'status_code', 'html_file', 'error', 'error_message'])
             writer.writeheader()
             writer.writerows(metadata_entries)
         print(f"\nMetadata saved to {csv_file}")

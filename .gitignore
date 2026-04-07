@@ -209,3 +209,5 @@ __marimo__/
 data/
 
 *.csv
+
+.last_analysis_time.json

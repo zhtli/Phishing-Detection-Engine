@@ -7,9 +7,15 @@ from urllib.parse import urlparse
 import urllib3
 from datetime import datetime, timedelta
 import json
+import hashlib
+import signal
+import sys
 
 DATA_DIR = "data"
+SCRIPT_DIR = f"{DATA_DIR}/JS"
+HTML_DIR = f"{DATA_DIR}/HTML"
 LAST_ANALYSIS_FILE = ".last_analysis_time.json"
+SCRIPT_CACHE_FILE = f"{SCRIPT_DIR}/.script_cache.json"  # Maps content hashes to saved filenames
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 }
@@ -18,7 +24,14 @@ PHISHTANK_HEADERS = {
     "User-Agent": "phishtank"
 }
 
+# Global state for graceful shutdown
+_dataset_entries = []
+_script_cache = {}
+_current_total = 0
+
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(HTML_DIR, exist_ok=True)
+os.makedirs(SCRIPT_DIR, exist_ok=True)
 
 
 def download_phishtank_csv():
@@ -62,6 +75,54 @@ def save_last_analysis_time(timestamp):
             json.dump({'last_time': timestamp}, f)
     except Exception as e:
         print(f"Warning: Could not save last analysis time: {e}")
+
+def load_script_cache():
+    """Load the script cache mapping (hash -> filename)."""
+    if os.path.exists(SCRIPT_CACHE_FILE):
+        try:
+            with open(SCRIPT_CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not load script cache: {e}")
+    return {}
+
+def save_script_cache(cache):
+    """Save the script cache mapping."""
+    try:
+        with open(SCRIPT_CACHE_FILE, 'w') as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"Warning: Could not save script cache: {e}")
+
+def get_script_hash(content):
+    """Calculate SHA256 hash of script content."""
+    return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+def extract_script_name(src_url):
+    """Extract a meaningful filename from script src URL."""
+    # Handle inline scripts
+    if not src_url or src_url.startswith('data:'):
+        return None
+    
+    # Parse the URL
+    parsed = urlparse(src_url)
+    
+    # Get the filename from the path
+    filename = os.path.basename(parsed.path)
+    
+    # If no filename, use the domain
+    if not filename or filename == '':
+        filename = parsed.netloc.replace('.', '_')
+    
+    # Handle query strings - remove them but keep the base filename
+    if '?' in filename:
+        filename = filename.split('?')[0]
+    
+    # Ensure it ends with .js
+    if not filename.endswith('.js'):
+        filename += '.js'
+    
+    return filename
 
 def read_urls_from_file(path, days=None, since=None):
     """
@@ -114,18 +175,24 @@ def read_urls_from_file(path, days=None, since=None):
     return urls_with_time
 
 def extract_and_fetch_scripts(html, base_url):
-    """Extract external script sources and fetch their content."""
+    """Extract external script sources and fetch their content.
+    
+    Returns:
+        List of tuples: (script_src, script_content)
+    """
     soup = BeautifulSoup(html, 'html.parser')
     js_scripts = []
+    
     for script in soup.find_all('script'):
         if script.get('src'):
             src = script['src']
             js_url = src if src.startswith('http') else urlparse(base_url)._replace(path=src).geturl()
             try:
                 js_resp = requests.get(js_url, headers=HEADERS, timeout=5, verify=False)
-                js_scripts.append(js_resp.text)
+                js_scripts.append((src, js_resp.text))
             except Exception as e:
                 print(f"// Error fetching {src}: {e}")
+    
     return js_scripts
 
 def fetch_website(url):
@@ -136,27 +203,85 @@ def fetch_website(url):
         status_code = resp.status_code
         redirect_count = len(resp.history)
         final_url = resp.url
+        reason = resp.reason
         js_scripts = extract_and_fetch_scripts(html, url)
-        return html, js_scripts, status_code, redirect_count, final_url
+        return html, js_scripts, status_code, redirect_count, final_url, reason
     except Exception as e:
         print(f"Error fetching {url}: {e}")
         raise Exception(f"Failed to fetch {url}: {e}")
 
-def create_entry(url, final_url, status_code, redirect_count, html_file='', js_file='', error=False, error_message=''):
-    """Create a metadata entry dictionary."""
+def create_entry(url, final_url, status_code, redirect_count, html_file='', js_files=None, reason='', error=False, error_message=''):
+    """Create a metadata entry dictionary.
+    
+    Args:
+        js_files: List of JS file paths referenced by this URL
+        reason: HTTP response reason phrase
+    """
+    if js_files is None:
+        js_files = []
+    
     return {
         'url': url,
         'final_url': final_url,
         'status_code': status_code,
+        'reason': reason,
         'redirect_count': redirect_count,
         'html_file': html_file,
-        'js_file': js_file,
+        'js_files': '|'.join(js_files),  # Store as pipe-separated list
         'error': error,
         'error_message': error_message
     }
 
-def save_data(url, html, js_scripts, status_code, redirect_count, final_url):
-    """Save HTML and JS files, return metadata entry."""
+def save_dataset_to_csv():
+    """Save collected dataset entries to CSV file."""
+    global _dataset_entries
+    
+    if not _dataset_entries:
+        print("No data to save.")
+        return
+    
+    csv_file = os.path.join(DATA_DIR, 'dataset.csv')
+    try:
+        with open(csv_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=['url', 'final_url', 'status_code', 'reason', 'redirect_count', 'html_file', 'js_files', 'error', 'error_message'])
+            writer.writeheader()
+            writer.writerows(_dataset_entries)
+        print(f"\n✓ Metadata saved to {csv_file} ({len(_dataset_entries)} entries)")
+    except Exception as e:
+        print(f"\n✗ Error saving dataset: {e}")
+
+def save_and_exit(signum=None, frame=None):
+    """Signal handler for graceful shutdown (Ctrl+C)."""
+    print("\n\nReceived interrupt signal. Saving progress...")
+    
+    # Save script cache
+    save_script_cache(_script_cache)
+    print(f"✓ Script cache updated with {len(_script_cache)} total entries")
+    
+    # Save dataset
+    save_dataset_to_csv()
+    
+    # Save the current analysis timestamp
+    current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
+    save_last_analysis_time(current_time)
+    print(f"✓ Analysis timestamp saved.")
+    
+    print(f"\nProcessed {len(_dataset_entries)} out of {_current_total} URLs before interruption.")
+    print("Use --use-last to continue from here next time.")
+    sys.exit(0)
+
+
+def save_data(url, html, js_scripts, status_code, redirect_count, final_url, reason, script_cache):
+    """Save HTML and JS files, return metadata entry.
+    
+    Args:
+        js_scripts: List of tuples (script_src, script_content)
+        reason: HTTP response reason phrase
+        script_cache: Dictionary mapping content hashes to saved filenames
+    
+    Returns:
+        Tuple: (entry, updated_script_cache)
+    """
     safe_url = url.replace('://', '_').replace('/', '_')
     
     if status_code >= 400:
@@ -164,32 +289,78 @@ def save_data(url, html, js_scripts, status_code, redirect_count, final_url):
             url=url,
             final_url=final_url,
             status_code=status_code,
-            redirect_count=redirect_count
-        )
-    else:
-        # Save HTML file
-        with open(os.path.join(DATA_DIR, f'{safe_url}.html'), 'w', encoding='utf-8') as f:
-            f.write(html)
-        
-        # Save JS files
-        js_file = f'{safe_url}.js' if len(js_scripts) > 0 else ''
-        if js_file:
-            with open(os.path.join(DATA_DIR, js_file), 'w', encoding='utf-8') as f:
-                for js_code in js_scripts:
-                    f.write(js_code)
-        
-        entry = create_entry(
-            url=url,
-            final_url=final_url,
-            status_code=status_code,
             redirect_count=redirect_count,
-            html_file=f'{safe_url}.html',
-            js_file=js_file
+            reason=reason
         )
+        return entry, script_cache
     
-    return entry
+    # Save HTML file
+    with open(os.path.join(HTML_DIR, f'{safe_url}.html'), 'w', encoding='utf-8') as f:
+        f.write(html)
+    
+    # Process and save individual JS files with deduplication
+    saved_js_files = []
+    
+    for script_src, script_content in js_scripts:
+        if not script_content or not script_content.strip():
+            continue
+        
+        # Calculate hash for deduplication
+        script_hash = get_script_hash(script_content)
+        
+        # Check if we've already saved this exact script
+        if script_hash in script_cache:
+            saved_js_files.append(script_cache[script_hash])
+        else:
+            # Extract meaningful filename from script src
+            script_filename = extract_script_name(script_src)
+            
+            if not script_filename:
+                # Fallback for inline/data scripts
+                script_filename = f"{safe_url}_inline_{len(saved_js_files)}.js"
+            else:
+                # Ensure uniqueness in the data directory
+                base_name = script_filename[:-3]  # Remove .js
+                ext = '.js'
+                counter = 1
+                full_filename = script_filename
+                
+                while os.path.exists(os.path.join(SCRIPT_DIR, full_filename)):
+                    full_filename = f"{base_name}_{counter}{ext}"
+                    counter += 1
+                
+                script_filename = full_filename
+            
+            # Save the script file
+            try:
+                file_path = os.path.join(SCRIPT_DIR, script_filename)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(script_content)
+                
+                # Update cache
+                script_cache[script_hash] = script_filename
+                saved_js_files.append(script_filename)
+            except Exception as e:
+                print(f"  Error saving script {script_filename}: {e}")
+    
+    entry = create_entry(
+        url=url,
+        final_url=final_url,
+        status_code=status_code,
+        redirect_count=redirect_count,
+        html_file=f'{safe_url}.html',
+        js_files=saved_js_files,
+        reason=reason
+    )
+    
+    return entry, script_cache
 
 def main():
+    global _dataset_entries, _script_cache, _current_total
+    
+    # Register signal handler for Ctrl+C
+    signal.signal(signal.SIGINT, save_and_exit)
+    
     parser = argparse.ArgumentParser(description='Collect phishing dataset from URL list')
     parser.add_argument('--file', help='Input file containing URLs')
     parser.add_argument('--download', action='store_true', help='Download PhishTank CSV from online-valid.csv')
@@ -243,35 +414,53 @@ def main():
         print("No URLs to process with the given filters.")
         return
     
-    dataset_entries = []
+    _current_total = total
     
-    for idx, url in enumerate(urls[:total]):
-        print(f"[{idx+1}/{total}] Processing: {url}")
-        try:
-            html, js_scripts, status_code, redirect_count, final_url = fetch_website(url)
-            entry = save_data(url=url, html=html, js_scripts=js_scripts, status_code=status_code, redirect_count=redirect_count, final_url=final_url)
-            dataset_entries.append(entry)
-        except Exception as e:
-            print(f"Error processing {url}: {e}")
-            entry = create_entry(
-                url=url,
-                error=True,
-                error_message=str(e)
-            )
-            dataset_entries.append(entry)
+    # Load script cache for deduplication
+    _script_cache = load_script_cache()
+    print(f"Loaded script cache with {len(_script_cache)} entries")
     
-    csv_file = os.path.join(DATA_DIR, 'dataset.csv')
-    if dataset_entries:
-        with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=['url', 'final_url', 'status_code', 'redirect_count', 'html_file', 'js_file', 'error', 'error_message'])
-            writer.writeheader()
-            writer.writerows(dataset_entries)
-        print(f"\nMetadata saved to {csv_file}")
-        
-        # Save the current analysis timestamp
-        current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
-        save_last_analysis_time(current_time)
-        print(f"Analysis timestamp saved. Next time, use --use-last to continue from here.")
+    try:
+        for idx, url in enumerate(urls[:total]):
+            print(f"[{idx+1}/{total}] Processing: {url}")
+            try:
+                html, js_scripts, status_code, redirect_count, final_url, reason = fetch_website(url)
+                entry, _script_cache = save_data(
+                    url=url, 
+                    html=html, 
+                    js_scripts=js_scripts, 
+                    status_code=status_code, 
+                    redirect_count=redirect_count, 
+                    final_url=final_url,
+                    reason=reason,
+                    script_cache=_script_cache
+                )
+                _dataset_entries.append(entry)
+            except Exception as e:
+                print(f"Error processing {url}: {e}")
+                entry = create_entry(
+                    url=url,
+                    error=True,
+                    error_message=str(e)
+                )
+                _dataset_entries.append(entry)
+    
+    except KeyboardInterrupt:
+        # This shouldn't normally trigger since signal handler catches it,
+        # but kept as a fallback
+        save_and_exit()
+    
+    # Save script cache
+    save_script_cache(_script_cache)
+    print(f"\nScript cache updated with {len(_script_cache)} total entries")
+    
+    # Save dataset
+    save_dataset_to_csv()
+    
+    # Save the current analysis timestamp
+    current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
+    save_last_analysis_time(current_time)
+    print(f"✓ Analysis timestamp saved. Next time, use --use-last to continue from here.")
 
 if __name__ == "__main__":
     urllib3.disable_warnings()

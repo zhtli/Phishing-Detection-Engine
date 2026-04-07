@@ -1,15 +1,20 @@
 import os
-from bs4 import BeautifulSoup
 import requests
 import argparse
 import csv
-from urllib.parse import urlparse
 import urllib3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
-import hashlib
 import signal
 import sys
+from dataclasses import dataclass, asdict
+from src_code_manager import (
+    load_script_cache,
+    save_script_cache,
+    get_script_hash,
+    extract_script_name,
+    fetch_website,
+)
 
 DATA_DIR = "data"
 SCRIPT_DIR = f"{DATA_DIR}/JS"
@@ -24,14 +29,48 @@ PHISHTANK_HEADERS = {
     "User-Agent": "phishtank"
 }
 
+@dataclass
+class DatasetEntry:
+    """Model for dataset metadata entries."""
+    url: str
+    final_url: str = ''
+    status_code: int = 0
+    reason: str = ''
+    redirect_count: int = 0
+    html_file: str = ''
+    js_files: str = ''  # Pipe-separated list of JS filenames
+    error: bool = False
+    error_message: str = ''
+    
+    def to_dict(self) -> dict:
+        """Convert entry to dictionary for CSV export."""
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> 'DatasetEntry':
+        """Create entry from dictionary."""
+        # Only include fields that exist in the dataclass
+        fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_data = {k: v for k, v in data.items() if k in fields}
+        return cls(**filtered_data)
+
+
 # Global state for graceful shutdown
 _dataset_entries = []
 _script_cache = {}
 _current_total = 0
+_session_id = ""  # Will be set at runtime with UTC timestamp including seconds
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(HTML_DIR, exist_ok=True)
 os.makedirs(SCRIPT_DIR, exist_ok=True)
+
+
+def generate_session_id():
+    """Generate a session ID with UTC timestamp including seconds."""
+    now_utc = datetime.now(timezone.utc)
+    # Format: YYYYMMDD_HHMMSS (e.g., 20260407_143052)
+    return now_utc.strftime("%Y%m%d_%H%M%S")
 
 
 def download_phishtank_csv():
@@ -76,53 +115,7 @@ def save_last_analysis_time(timestamp):
     except Exception as e:
         print(f"Warning: Could not save last analysis time: {e}")
 
-def load_script_cache():
-    """Load the script cache mapping (hash -> filename)."""
-    if os.path.exists(SCRIPT_CACHE_FILE):
-        try:
-            with open(SCRIPT_CACHE_FILE, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Warning: Could not load script cache: {e}")
-    return {}
 
-def save_script_cache(cache):
-    """Save the script cache mapping."""
-    try:
-        with open(SCRIPT_CACHE_FILE, 'w') as f:
-            json.dump(cache, f)
-    except Exception as e:
-        print(f"Warning: Could not save script cache: {e}")
-
-def get_script_hash(content):
-    """Calculate SHA256 hash of script content."""
-    return hashlib.sha256(content.encode('utf-8')).hexdigest()
-
-def extract_script_name(src_url):
-    """Extract a meaningful filename from script src URL."""
-    # Handle inline scripts
-    if not src_url or src_url.startswith('data:'):
-        return None
-    
-    # Parse the URL
-    parsed = urlparse(src_url)
-    
-    # Get the filename from the path
-    filename = os.path.basename(parsed.path)
-    
-    # If no filename, use the domain
-    if not filename or filename == '':
-        filename = parsed.netloc.replace('.', '_')
-    
-    # Handle query strings - remove them but keep the base filename
-    if '?' in filename:
-        filename = filename.split('?')[0]
-    
-    # Ensure it ends with .js
-    if not filename.endswith('.js'):
-        filename += '.js'
-    
-    return filename
 
 def read_urls_from_file(path, days=None, since=None):
     """
@@ -174,79 +167,59 @@ def read_urls_from_file(path, days=None, since=None):
     
     return urls_with_time
 
-def extract_and_fetch_scripts(html, base_url):
-    """Extract external script sources and fetch their content.
-    
-    Returns:
-        List of tuples: (script_src, script_content)
-    """
-    soup = BeautifulSoup(html, 'html.parser')
-    js_scripts = []
-    
-    for script in soup.find_all('script'):
-        if script.get('src'):
-            src = script['src']
-            js_url = src if src.startswith('http') else urlparse(base_url)._replace(path=src).geturl()
-            try:
-                js_resp = requests.get(js_url, headers=HEADERS, timeout=5, verify=False)
-                js_scripts.append((src, js_resp.text))
-            except Exception as e:
-                print(f"// Error fetching {src}: {e}")
-    
-    return js_scripts
 
-def fetch_website(url):
-    """Fetch website HTML and associated JavaScript files."""
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=10, verify=False)
-        html = resp.text
-        status_code = resp.status_code
-        redirect_count = len(resp.history)
-        final_url = resp.url
-        reason = resp.reason
-        js_scripts = extract_and_fetch_scripts(html, url)
-        return html, js_scripts, status_code, redirect_count, final_url, reason
-    except Exception as e:
-        print(f"Error fetching {url}: {e}")
-        raise Exception(f"Failed to fetch {url}: {e}")
 
-def create_entry(url, final_url, status_code, redirect_count, html_file='', js_files=None, reason='', error=False, error_message=''):
-    """Create a metadata entry dictionary.
+def create_entry(url, final_url='', status_code=0, redirect_count=0, html_file='', js_files=None, reason='', error=False, error_message='') -> DatasetEntry:
+    """Create a metadata entry.
     
     Args:
+        url: The original URL
+        final_url: The final URL after redirects
+        status_code: HTTP status code
+        redirect_count: Number of redirects
+        html_file: Filename of saved HTML file
         js_files: List of JS file paths referenced by this URL
         reason: HTTP response reason phrase
+        error: Whether an error occurred
+        error_message: Error message if error occurred
+    
+    Returns:
+        DatasetEntry: The created entry model
     """
     if js_files is None:
         js_files = []
     
-    return {
-        'url': url,
-        'final_url': final_url,
-        'status_code': status_code,
-        'reason': reason,
-        'redirect_count': redirect_count,
-        'html_file': html_file,
-        'js_files': '|'.join(js_files),  # Store as pipe-separated list
-        'error': error,
-        'error_message': error_message
-    }
+    return DatasetEntry(
+        url=url,
+        final_url=final_url,
+        status_code=status_code,
+        reason=reason,
+        redirect_count=redirect_count,
+        html_file=html_file,
+        js_files='|'.join(js_files),  # Store as pipe-separated list
+        error=error,
+        error_message=error_message
+    )
 
 def save_dataset_to_csv():
     """Save collected dataset entries to CSV file."""
-    global _dataset_entries
+    global _dataset_entries, _session_id
     
     if not _dataset_entries:
         print("No data to save.")
         return
     
-    csv_file = os.path.join(DATA_DIR, 'dataset.csv')
+    csv_file = os.path.join(DATA_DIR, f'dataset_{_session_id}.csv')
     try:
+        # Get fieldnames from the DatasetEntry dataclass
+        fieldnames = [f.name for f in _dataset_entries[0].__dataclass_fields__.values()]
+        
         with open(csv_file, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=['url', 'final_url', 'status_code', 'reason', 'redirect_count', 'html_file', 'js_files', 'error', 'error_message'])
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(_dataset_entries)
-        print(f"\n✓ Metadata saved to {csv_file} ({len(_dataset_entries)} entries)")
+            # Convert DatasetEntry objects to dictionaries
+            writer.writerows([entry.to_dict() for entry in _dataset_entries])
+        print(f"\nMetadata saved to {csv_file} ({len(_dataset_entries)} entries)")
     except Exception as e:
         print(f"\n✗ Error saving dataset: {e}")
 
@@ -256,7 +229,7 @@ def save_and_exit(signum=None, frame=None):
     
     # Save script cache
     save_script_cache(_script_cache)
-    print(f"✓ Script cache updated with {len(_script_cache)} total entries")
+    print(f"Script cache updated with {len(_script_cache)} total entries")
     
     # Save dataset
     save_dataset_to_csv()
@@ -264,10 +237,9 @@ def save_and_exit(signum=None, frame=None):
     # Save the current analysis timestamp
     current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
     save_last_analysis_time(current_time)
-    print(f"✓ Analysis timestamp saved.")
+    print(f"Analysis timestamp saved.")
     
     print(f"\nProcessed {len(_dataset_entries)} out of {_current_total} URLs before interruption.")
-    print("Use --use-last to continue from here next time.")
     sys.exit(0)
 
 
@@ -356,7 +328,11 @@ def save_data(url, html, js_scripts, status_code, redirect_count, final_url, rea
     return entry, script_cache
 
 def main():
-    global _dataset_entries, _script_cache, _current_total
+    global _dataset_entries, _script_cache, _current_total, _session_id
+    
+    # Generate session ID with UTC timestamp
+    _session_id = generate_session_id()
+    print(f"Session ID: {_session_id}\n")
     
     # Register signal handler for Ctrl+C
     signal.signal(signal.SIGINT, save_and_exit)
@@ -458,9 +434,10 @@ def main():
     save_dataset_to_csv()
     
     # Save the current analysis timestamp
-    current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
-    save_last_analysis_time(current_time)
-    print(f"✓ Analysis timestamp saved. Next time, use --use-last to continue from here.")
+    if not args.limit:
+        current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
+        save_last_analysis_time(current_time)
+        print(f"Analysis timestamp saved. Next time, use --use-last to continue from here.")
 
 if __name__ == "__main__":
     urllib3.disable_warnings()

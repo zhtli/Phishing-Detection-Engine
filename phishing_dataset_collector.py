@@ -8,9 +8,11 @@ import json
 import signal
 import sys
 from dataclasses import dataclass, asdict
-from src_code_manager import (
+from web_code_manager import (
     load_script_cache,
     save_script_cache,
+    load_html_cache,
+    save_html_cache,
     get_script_hash,
     extract_script_name,
     fetch_website,
@@ -21,13 +23,26 @@ SCRIPT_DIR = f"{DATA_DIR}/JS"
 HTML_DIR = f"{DATA_DIR}/HTML"
 LAST_ANALYSIS_FILE = ".last_analysis_time.json"
 SCRIPT_CACHE_FILE = f"{SCRIPT_DIR}/.script_cache.json"  # Maps content hashes to saved filenames
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-}
+HTML_CACHE_FILE = f"{HTML_DIR}/.html_cache.json"  # Maps content hashes to saved filenames
 PHISHTANK_CSV_URL = "http://data.phishtank.com/data/online-valid.csv"
 PHISHTANK_HEADERS = {
     "User-Agent": "phishtank"
 }
+# User agent profiles to rotate through
+PROFILE_MUTATIONS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",  # Desktop
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36",  # Android
+    # Cloaking trigger words
+    "bot",
+    "amazonaws",
+    "phishtank",
+    "dwcp",
+    "google",
+    "atn",
+    "curl",
+    "facebook",
+    "crawler",
+    "katipo"]
 
 @dataclass
 class DatasetEntry:
@@ -39,8 +54,10 @@ class DatasetEntry:
     redirect_count: int = 0
     html_file: str = ''
     js_files: str = ''  # Pipe-separated list of JS filenames
+    user_agent: str = ''  # User agent label used (e.g., 'desktop', 'android')
     error: bool = False
     error_message: str = ''
+
     
     def to_dict(self) -> dict:
         """Convert entry to dictionary for CSV export."""
@@ -58,8 +75,10 @@ class DatasetEntry:
 # Global state for graceful shutdown
 _dataset_entries = []
 _script_cache = {}
+_html_cache = {}
 _current_total = 0
 _session_id = ""  # Will be set at runtime with UTC timestamp including seconds
+
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(HTML_DIR, exist_ok=True)
@@ -167,9 +186,16 @@ def read_urls_from_file(path, days=None, since=None):
     
     return urls_with_time
 
+def get_user_agent_label(user_agent):
+    """Map full user agent string to a label for storage."""
+    if "Android" in user_agent:
+        return "android"
+    elif "Windows" in user_agent:
+        return "desktop"
+    else:
+        return user_agent
 
-
-def create_entry(url, final_url='', status_code=0, redirect_count=0, html_file='', js_files=None, reason='', error=False, error_message='') -> DatasetEntry:
+def create_entry(url, final_url='', status_code=0, redirect_count=0, html_file='', js_files=None, user_agent='', reason='', error=False, error_message='') -> DatasetEntry:
     """Create a metadata entry.
     
     Args:
@@ -179,6 +205,7 @@ def create_entry(url, final_url='', status_code=0, redirect_count=0, html_file='
         redirect_count: Number of redirects
         html_file: Filename of saved HTML file
         js_files: List of JS file paths referenced by this URL
+        user_agent: User agent label used for the request (e.g., 'desktop', 'android')
         reason: HTTP response reason phrase
         error: Whether an error occurred
         error_message: Error message if error occurred
@@ -197,6 +224,7 @@ def create_entry(url, final_url='', status_code=0, redirect_count=0, html_file='
         redirect_count=redirect_count,
         html_file=html_file,
         js_files='|'.join(js_files),  # Store as pipe-separated list
+        user_agent=user_agent,
         error=error,
         error_message=error_message
     )
@@ -219,9 +247,9 @@ def save_dataset_to_csv():
             writer.writeheader()
             # Convert DatasetEntry objects to dictionaries
             writer.writerows([entry.to_dict() for entry in _dataset_entries])
-        print(f"\nMetadata saved to {csv_file} ({len(_dataset_entries)} entries)")
+        print(f"\nDataset saved to {csv_file} ({len(_dataset_entries)} entries)")
     except Exception as e:
-        print(f"\n✗ Error saving dataset: {e}")
+        print(f"\nError saving dataset: {e}")
 
 def save_and_exit(signum=None, frame=None):
     """Signal handler for graceful shutdown (Ctrl+C)."""
@@ -230,6 +258,10 @@ def save_and_exit(signum=None, frame=None):
     # Save script cache
     save_script_cache(_script_cache)
     print(f"Script cache updated with {len(_script_cache)} total entries")
+    
+    # Save HTML cache
+    save_html_cache(_html_cache)
+    print(f"HTML cache updated with {len(_html_cache)} total entries")
     
     # Save dataset
     save_dataset_to_csv()
@@ -243,34 +275,108 @@ def save_and_exit(signum=None, frame=None):
     sys.exit(0)
 
 
-def save_data(url, html, js_scripts, status_code, redirect_count, final_url, reason, script_cache):
-    """Save HTML and JS files, return metadata entry.
+def truncate_filename_on_error(filename):
+    """Truncate filename to fit within 255 byte filesystem limit.
     
     Args:
+        filename: The filename to truncate
+        
+    Returns:
+        Truncated filename with hash suffix for uniqueness
+    """
+    max_length = 255
+    if len(filename.encode('utf-8')) <= max_length:
+        return filename
+    
+    # Use hash of original filename for uniqueness
+    file_hash = get_script_hash(filename)[:8]
+    extension = filename[filename.rfind('.'):]  # e.g., '.js' or '.html'
+    base_name = filename[:filename.rfind('.')]
+    
+    # Reserve space for hash, underscore, and extension
+    reserved = len(file_hash) + 1 + len(extension)
+    max_base = max_length - reserved
+    
+    if max_base > 10:
+        truncated_base = base_name[:max_base]
+        return f"{truncated_base}_{file_hash}{extension}"
+    else:
+        # Fallback: use just hash + extension
+        return f"{file_hash}{extension}"
+
+def save_html_file(url, html, html_cache):
+    """Save HTML file with deduplication.
+    
+    Args:
+        url: The original URL
+        html: HTML content
+        html_cache: Dictionary mapping content hashes to saved filenames
+    
+    Returns:
+        Tuple: (html_filename, updated_html_cache)
+    """
+    html_file = ''
+    
+    if len(html) > 0:
+        html_hash = get_script_hash(html)
+        
+        if html_hash in html_cache:
+            # Reuse existing HTML file
+            html_file = html_cache[html_hash]
+        else:
+            # Create new HTML file
+            safe_url = url.replace('://', '_').replace('/', '_')
+            html_filename = f'{safe_url}.html'
+            
+            # Ensure uniqueness in the data directory if needed
+            base_name = safe_url[:-5] if safe_url.endswith('.html') else safe_url
+            counter = 1
+            full_filename = html_filename
+            
+            while os.path.exists(os.path.join(HTML_DIR, full_filename)):
+                full_filename = f"{base_name}_html_{counter}.html"
+                counter += 1
+            
+            html_filename = full_filename
+            
+            # Save the HTML file
+            try:
+                file_path = os.path.join(HTML_DIR, html_filename)
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(html)
+                
+                # Update cache
+                html_cache[html_hash] = html_filename
+                html_file = html_filename
+            except OSError as e:
+                if e.errno == 36:  # File name too long
+                    # Truncate and retry
+                    html_filename = truncate_filename_on_error(html_filename)
+                    try:
+                        file_path = os.path.join(HTML_DIR, html_filename)
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(html)
+                        html_cache[html_hash] = html_filename
+                        html_file = html_filename
+                    except Exception as retry_err:
+                        print(f"  Error saving HTML {html_filename}: {retry_err}")
+                else:
+                    print(f"  Error saving HTML {html_filename}: {e}")
+    
+    return html_file, html_cache
+
+
+def save_js_files(url, js_scripts, script_cache):
+    """Save JavaScript files with deduplication.
+    
+    Args:
+        url: The original URL
         js_scripts: List of tuples (script_src, script_content)
-        reason: HTTP response reason phrase
         script_cache: Dictionary mapping content hashes to saved filenames
     
     Returns:
-        Tuple: (entry, updated_script_cache)
+        Tuple: (saved_js_files, updated_script_cache)
     """
-    safe_url = url.replace('://', '_').replace('/', '_')
-    
-    if status_code >= 400:
-        entry = create_entry(
-            url=url,
-            final_url=final_url,
-            status_code=status_code,
-            redirect_count=redirect_count,
-            reason=reason
-        )
-        return entry, script_cache
-    
-    # Save HTML file
-    with open(os.path.join(HTML_DIR, f'{safe_url}.html'), 'w', encoding='utf-8') as f:
-        f.write(html)
-    
-    # Process and save individual JS files with deduplication
     saved_js_files = []
     
     for script_src, script_content in js_scripts:
@@ -287,21 +393,17 @@ def save_data(url, html, js_scripts, status_code, redirect_count, final_url, rea
             # Extract meaningful filename from script src
             script_filename = extract_script_name(script_src)
             
-            if not script_filename:
-                # Fallback for inline/data scripts
-                script_filename = f"{safe_url}_inline_{len(saved_js_files)}.js"
-            else:
-                # Ensure uniqueness in the data directory
-                base_name = script_filename[:-3]  # Remove .js
-                ext = '.js'
-                counter = 1
-                full_filename = script_filename
-                
-                while os.path.exists(os.path.join(SCRIPT_DIR, full_filename)):
-                    full_filename = f"{base_name}_{counter}{ext}"
-                    counter += 1
-                
-                script_filename = full_filename
+            # Ensure uniqueness in the data directory
+            base_name = script_filename[:-3]  # Remove .js
+            ext = '.js'
+            counter = 1
+            full_filename = script_filename
+            
+            while os.path.exists(os.path.join(SCRIPT_DIR, full_filename)):
+                full_filename = f"{base_name}_{counter}{ext}"
+                counter += 1
+            
+            script_filename = full_filename
             
             # Save the script file
             try:
@@ -312,23 +414,65 @@ def save_data(url, html, js_scripts, status_code, redirect_count, final_url, rea
                 # Update cache
                 script_cache[script_hash] = script_filename
                 saved_js_files.append(script_filename)
-            except Exception as e:
-                print(f"  Error saving script {script_filename}: {e}")
+            except OSError as e:
+                if e.errno == 36:  # File name too long
+                    # Truncate and retry
+                    script_filename = truncate_filename_on_error(script_filename)
+                    try:
+                        file_path = os.path.join(SCRIPT_DIR, script_filename)
+                        with open(file_path, 'w', encoding='utf-8') as f:
+                            f.write(script_content)
+                        script_cache[script_hash] = script_filename
+                        saved_js_files.append(script_filename)
+                    except Exception as retry_err:
+                        print(f"  Error saving script {script_filename}: {retry_err}")
+                else:
+                    print(f"  Error saving script {script_filename}: {e}")
     
+    return saved_js_files, script_cache
+
+
+def save_data(url, html, js_scripts, status_code, redirect_count, final_url, reason, script_cache, html_cache, user_agent=''):
+    """Save HTML and JS files, return metadata entry.
+    
+    Args:
+        url: The original URL
+        html: HTML content
+        js_scripts: List of tuples (script_src, script_content)
+        status_code: HTTP status code
+        redirect_count: Number of redirects
+        final_url: Final URL after redirects
+        reason: HTTP response reason phrase
+        script_cache: Dictionary mapping content hashes to saved filenames
+        html_cache: Dictionary mapping content hashes to saved filenames
+        user_agent: User agent label used for the request
+    
+    Returns:
+        Tuple: (entry, updated_script_cache, updated_html_cache)
+    """
+    # Save HTML file with deduplication
+    html_file, html_cache = save_html_file(url, html, html_cache)
+    
+    # Save JavaScript files with deduplication
+    saved_js_files, script_cache = save_js_files(url, js_scripts, script_cache)
+    
+    # Create metadata entry
     entry = create_entry(
         url=url,
         final_url=final_url,
         status_code=status_code,
         redirect_count=redirect_count,
-        html_file=f'{safe_url}.html',
+        html_file=html_file,
         js_files=saved_js_files,
+        user_agent=user_agent,
         reason=reason
     )
     
-    return entry, script_cache
+    return entry, script_cache, html_cache
 
 def main():
-    global _dataset_entries, _script_cache, _current_total, _session_id
+    global _dataset_entries, _script_cache, _html_cache, _current_total, _session_id
+
     
     # Generate session ID with UTC timestamp
     _session_id = generate_session_id()
@@ -396,30 +540,41 @@ def main():
     _script_cache = load_script_cache()
     print(f"Loaded script cache with {len(_script_cache)} entries")
     
+    _html_cache = load_html_cache()
+    print(f"Loaded HTML cache with {len(_html_cache)} entries")
+    
     try:
         for idx, url in enumerate(urls[:total]):
             print(f"[{idx+1}/{total}] Processing: {url}")
-            try:
-                html, js_scripts, status_code, redirect_count, final_url, reason = fetch_website(url)
-                entry, _script_cache = save_data(
-                    url=url, 
-                    html=html, 
-                    js_scripts=js_scripts, 
-                    status_code=status_code, 
-                    redirect_count=redirect_count, 
-                    final_url=final_url,
-                    reason=reason,
-                    script_cache=_script_cache
-                )
-                _dataset_entries.append(entry)
-            except Exception as e:
-                print(f"Error processing {url}: {e}")
-                entry = create_entry(
-                    url=url,
-                    error=True,
-                    error_message=str(e)
-                )
-                _dataset_entries.append(entry)
+            
+            for agent_idx, user_agent in enumerate(PROFILE_MUTATIONS):
+                user_agent_label = get_user_agent_label(user_agent)
+                
+                try:
+                    html, js_scripts, status_code, redirect_count, final_url, reason = fetch_website(url, user_agent=user_agent)
+                    entry, _script_cache, _html_cache = save_data(
+                        url=url, 
+                        html=html, 
+                        js_scripts=js_scripts, 
+                        status_code=status_code, 
+                        redirect_count=redirect_count, 
+                        final_url=final_url,
+                        reason=reason,
+                        script_cache=_script_cache,
+                        html_cache=_html_cache,
+                        user_agent=user_agent_label
+                    )
+                    _dataset_entries.append(entry)
+                    print(f"    ✓ HTTP {status_code} | HTML: {entry.html_file} | JS files: {len(entry.js_files.split('|')) if entry.js_files else 0}")
+                except Exception as e:
+                    print(f"Warning: {e}")
+                    entry = create_entry(
+                        url=url,
+                        user_agent=user_agent_label,
+                        error=True,
+                        error_message=str(e)
+                    )
+                    _dataset_entries.append(entry)
     
     except KeyboardInterrupt:
         # This shouldn't normally trigger since signal handler catches it,
@@ -429,6 +584,10 @@ def main():
     # Save script cache
     save_script_cache(_script_cache)
     print(f"\nScript cache updated with {len(_script_cache)} total entries")
+    
+    # Save HTML cache
+    save_html_cache(_html_cache)
+    print(f"HTML cache updated with {len(_html_cache)} total entries")
     
     # Save dataset
     save_dataset_to_csv()

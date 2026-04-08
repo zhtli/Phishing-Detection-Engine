@@ -10,9 +10,8 @@ from bs4 import BeautifulSoup
 # Configuration
 SCRIPT_DIR = "data/JS"
 SCRIPT_CACHE_FILE = f"{SCRIPT_DIR}/.script_cache.json"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-}
+HTML_CACHE_FILE = "data/.html_cache.json"  # Maps content hashes to saved filenames
+
 
 
 def load_script_cache():
@@ -33,6 +32,27 @@ def save_script_cache(cache):
             json.dump(cache, f)
     except Exception as e:
         print(f"Warning: Could not save script cache: {e}")
+
+
+def load_html_cache():
+    """Load the HTML cache mapping (hash -> filename)."""
+    if os.path.exists(HTML_CACHE_FILE):
+        try:
+            with open(HTML_CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not load HTML cache: {e}")
+    return {}
+
+
+def save_html_cache(cache):
+    """Save the HTML cache mapping."""
+    try:
+        os.makedirs(os.path.dirname(HTML_CACHE_FILE), exist_ok=True)
+        with open(HTML_CACHE_FILE, 'w') as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"Warning: Could not save HTML cache: {e}")
 
 
 def get_script_hash(content):
@@ -67,38 +87,72 @@ def extract_script_name(src_url):
     return filename
 
 
-def extract_and_fetch_scripts(html, base_url):
+def extract_and_fetch_scripts(html, base_url, headers):
     """Extract external script sources and fetch their content.
+    
+    Args:
+        html: HTML content to parse
+        base_url: Base URL for resolving relative script URLs
+        headers: Custom headers to use for requests (defaults to HEADERS)
     
     Returns:
         List of tuples: (script_src, script_content)
     """
+    
     soup = BeautifulSoup(html, 'html.parser')
     js_scripts = []
     
     for script in soup.find_all('script'):
         if script.get('src'):
             src = script['src']
-            js_url = src if src.startswith('http') else urlparse(base_url)._replace(path=src).geturl()
+            
+            # Skip inline scripts (data URIs)
+            if src.startswith('data:'):
+                continue
+            
+            # Determine the full URL based on the src format
+            if src.startswith(('http://', 'https://')):
+                # Absolute URL
+                js_url = src
+            elif src.startswith('//'):
+                # Protocol-relative URL
+                parsed_base = urlparse(base_url)
+                js_url = f"{parsed_base.scheme}:{src}"
+            else:
+                # Relative URL
+                js_url = urlparse(base_url)._replace(path=src).geturl()
+            
             try:
-                js_resp = requests.get(js_url, headers=HEADERS, timeout=5, verify=False)
+                js_resp = requests.get(js_url, headers=headers, timeout=5, verify=False)
                 js_scripts.append((src, js_resp.text))
             except Exception as e:
-                print(f"// Error fetching {src}: {e}")
+                print(f"Error fetching {src}: {e}")
     
     return js_scripts
 
 
-def fetch_website(url):
-    """Fetch website HTML and associated JavaScript files."""
+def fetch_website(url, user_agent=None):
+    """Fetch website HTML and associated JavaScript files.
+    
+    Args:
+        url: The URL to fetch
+        user_agent: Custom user agent string (optional)
+    
+    Returns:
+        Tuple: (html, js_scripts, status_code, redirect_count, final_url, reason)
+    """
+    headers = {}
+    if user_agent:
+        headers["User-Agent"] = user_agent
+    
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=10, verify=False)
+        resp = requests.get(url, headers=headers, timeout=10, verify=False)
         html = resp.text
         status_code = resp.status_code
         redirect_count = len(resp.history)
         final_url = resp.url
         reason = resp.reason
-        js_scripts = extract_and_fetch_scripts(html, url)
+        js_scripts = extract_and_fetch_scripts(html, url, headers=headers)
         return html, js_scripts, status_code, redirect_count, final_url, reason
     except Exception as e:
         print(f"Error fetching {url}: {e}")

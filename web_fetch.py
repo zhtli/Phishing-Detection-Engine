@@ -4,14 +4,17 @@ import os
 import json
 import hashlib
 import requests
+import ssl
+import socket
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 # Configuration
 SCRIPT_DIR = "data/JS"
+CERT_DIR = "data/CERT"
 SCRIPT_CACHE_FILE = f"{SCRIPT_DIR}/.script_cache.json"
 HTML_CACHE_FILE = "data/.html_cache.json"  # Maps content hashes to saved filenames
-
+CERT_CACHE_FILE = f"{CERT_DIR}/.cert_cache.json"  # Maps certificate hashes to saved filenames
 
 
 def load_script_cache():
@@ -55,9 +58,122 @@ def save_html_cache(cache):
         print(f"Warning: Could not save HTML cache: {e}")
 
 
+def load_cert_cache():
+    """Load the certificate cache mapping (hash -> filename)."""
+    if os.path.exists(CERT_CACHE_FILE):
+        try:
+            with open(CERT_CACHE_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not load certificate cache: {e}")
+    return {}
+
+
+def save_cert_cache(cache):
+    """Save the certificate cache mapping."""
+    try:
+        os.makedirs(CERT_DIR, exist_ok=True)
+        with open(CERT_CACHE_FILE, 'w') as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"Warning: Could not save certificate cache: {e}")
+
+
 def get_script_hash(content):
     """Calculate SHA256 hash of script content."""
     return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+
+def get_certificate_fingerprint(cert_der):
+    """Calculate SHA256 fingerprint for a DER-encoded certificate."""
+    if not cert_der:
+        return ''
+    return hashlib.sha256(cert_der).hexdigest()
+
+
+def fetch_certificate_for_url(url, timeout=10):
+    """Fetch server certificate for an HTTPS URL and validate trust/time.
+
+    Returns:
+        Tuple: (cert_pem, cert_fingerprint, cert_valid, cert_error_message)
+    """
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != 'https':
+        return '', '', False, 'URL is not HTTPS'
+
+    hostname = parsed.hostname
+    if not hostname:
+        return '', '', False, 'Could not parse hostname from URL'
+
+    port = parsed.port if parsed.port else 443
+    cert_der = None
+    cert_dict = {}
+
+    try:
+        context = ssl.create_default_context()
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
+        with socket.create_connection((hostname, port), timeout=timeout) as sock:
+            with context.wrap_socket(sock, server_hostname=hostname) as tls_sock:
+                cert_der = tls_sock.getpeercert(binary_form=True)
+        cert_pem = ssl.DER_cert_to_PEM_cert(cert_der) if cert_der else ''
+        cert_fingerprint = get_certificate_fingerprint(cert_der)
+        return cert_pem, cert_fingerprint, True, ''
+    except ssl.SSLCertVerificationError as e:
+        verification_error = f'Certificate verification failed: {e}'
+
+        try:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            with socket.create_connection((hostname, port), timeout=timeout) as sock:
+                with context.wrap_socket(sock, server_hostname=hostname) as tls_sock:
+                    cert_der = tls_sock.getpeercert(binary_form=True)
+            cert_pem = ssl.DER_cert_to_PEM_cert(cert_der) if cert_der else ''
+            cert_fingerprint = get_certificate_fingerprint(cert_der)
+            return cert_pem, cert_fingerprint, False, verification_error
+        except Exception as inner_e:
+            return '', '', False, f'{verification_error}; retrieval also failed: {inner_e}'
+    except Exception as e:
+        return '', '', False, f'Certificate retrieval failed: {e}'
+
+
+def save_certificate_file(url, cert_cache):
+    """Save certificate as PEM file with deduplication.
+
+    Returns:
+        Tuple: (cert_file, cert_valid, cert_error_message, updated_cert_cache)
+    """
+    cert_pem, cert_fingerprint, cert_valid, cert_error = fetch_certificate_for_url(url)
+
+    if not cert_pem:
+        return '', cert_valid, cert_error, cert_cache
+
+    if cert_fingerprint in cert_cache:
+        return cert_cache[cert_fingerprint], cert_valid, cert_error, cert_cache
+
+    os.makedirs(CERT_DIR, exist_ok=True)
+    parsed = urlparse(url)
+    host_name = parsed.hostname if parsed.hostname else 'unknown_host'
+    cert_filename = f'{host_name}.pem'
+    base_name = host_name
+    counter = 1
+    full_filename = cert_filename
+
+    while os.path.exists(os.path.join(CERT_DIR, full_filename)):
+        full_filename = f"{base_name}_{counter}.pem"
+        counter += 1
+
+    cert_filename = full_filename
+
+    try:
+        cert_path = os.path.join(CERT_DIR, cert_filename)
+        with open(cert_path, 'w', encoding='utf-8') as f:
+            f.write(cert_pem)
+        cert_cache[cert_fingerprint] = cert_filename
+        return cert_filename, cert_valid, cert_error, cert_cache
+    except OSError as e:
+        return '', cert_valid, f'{cert_error}; error saving certificate: {e}', cert_cache
 
 
 def extract_script_name(src_url):
@@ -79,10 +195,6 @@ def extract_script_name(src_url):
     # Handle query strings - remove them but keep the base filename
     if '?' in filename:
         filename = filename.split('?')[0]
-    
-    # Ensure it ends with .js
-    if not filename.endswith('.js'):
-        filename += '.js'
     
     return filename
 

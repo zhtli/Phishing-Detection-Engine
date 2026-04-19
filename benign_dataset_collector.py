@@ -13,6 +13,12 @@ from web_fetch import (
     extract_script_name,
     fetch_website,
     save_certificate_file,
+    load_script_cache,
+    save_script_cache,
+    load_html_cache,
+    save_html_cache,
+    load_cert_cache,
+    save_cert_cache,
 )
 
 DATA_DIR = "benign_data"
@@ -76,27 +82,6 @@ def generate_session_id():
     """Generate a session ID with UTC timestamp including seconds."""
     now_utc = datetime.now(timezone.utc)
     return now_utc.strftime("%Y%m%d_%H%M%S")
-
-
-def load_cache(path):
-    """Load a JSON cache file, returning an empty dict on failure."""
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Warning: Could not load cache {path}: {e}")
-    return {}
-
-
-def save_cache(path, cache):
-    """Save cache dictionary to a JSON file."""
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(cache, f)
-    except Exception as e:
-        print(f"Warning: Could not save cache {path}: {e}")
 
 
 def read_urls_from_file(path):
@@ -196,13 +181,13 @@ def save_and_exit(signum=None, frame=None):
     """Signal handler for graceful shutdown (Ctrl+C)."""
     print("\n\nReceived interrupt signal. Saving progress...")
 
-    save_cache(SCRIPT_CACHE_FILE, _script_cache)
+    save_script_cache(_script_cache, SCRIPT_CACHE_FILE)
     print(f"Script cache updated with {len(_script_cache)} total entries")
 
-    save_cache(HTML_CACHE_FILE, _html_cache)
+    save_html_cache(_html_cache, HTML_CACHE_FILE)
     print(f"HTML cache updated with {len(_html_cache)} total entries")
 
-    save_cache(CERT_CACHE_FILE, _cert_cache)
+    save_cert_cache(_cert_cache, CERT_CACHE_FILE)
     print(f"Certificate cache updated with {len(_cert_cache)} total entries")
 
     save_dataset_to_csv()
@@ -402,13 +387,13 @@ def main():
 
     _current_total = total
 
-    _script_cache = load_cache(SCRIPT_CACHE_FILE)
+    _script_cache = load_script_cache(SCRIPT_CACHE_FILE)
     print(f"Loaded script cache with {len(_script_cache)} entries")
 
-    _html_cache = load_cache(HTML_CACHE_FILE)
+    _html_cache = load_html_cache(HTML_CACHE_FILE)
     print(f"Loaded HTML cache with {len(_html_cache)} entries")
 
-    _cert_cache = load_cache(CERT_CACHE_FILE)
+    _cert_cache = load_cert_cache(CERT_CACHE_FILE)
     print(f"Loaded certificate cache with {len(_cert_cache)} entries")
 
     try:
@@ -449,13 +434,13 @@ def main():
     except KeyboardInterrupt:
         save_and_exit()
 
-    save_cache(SCRIPT_CACHE_FILE, _script_cache)
+    save_script_cache(_script_cache, SCRIPT_CACHE_FILE)
     print(f"\nScript cache updated with {len(_script_cache)} total entries")
 
-    save_cache(HTML_CACHE_FILE, _html_cache)
+    save_html_cache(_html_cache, HTML_CACHE_FILE)
     print(f"HTML cache updated with {len(_html_cache)} total entries")
 
-    save_cache(CERT_CACHE_FILE, _cert_cache)
+    save_cert_cache(_cert_cache, CERT_CACHE_FILE)
     print(f"Certificate cache updated with {len(_cert_cache)} total entries")
 
     save_dataset_to_csv()

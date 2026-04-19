@@ -10,73 +10,57 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 
-def load_script_cache(cache_file):
-    """Load the script cache mapping (hash -> filename)."""
+def _load_cache(cache_file, cache_name):
+    """Load a JSON cache mapping from disk."""
     if os.path.exists(cache_file):
         try:
-            with open(cache_file, 'r') as f:
+            with open(cache_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Warning: Could not load script cache: {e}")
+            print(f"Warning: Could not load {cache_name}: {e}")
     return {}
+
+
+def _save_cache(cache, cache_file, cache_name):
+    """Save a JSON cache mapping to disk."""
+    try:
+        cache_dir = os.path.dirname(cache_file)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache, f)
+    except Exception as e:
+        print(f"Warning: Could not save {cache_name}: {e}")
+
+
+def load_script_cache(cache_file):
+    """Load the script cache mapping (hash -> filename)."""
+    return _load_cache(cache_file, 'script cache')
 
 
 def save_script_cache(cache, cache_file):
     """Save the script cache mapping."""
-    try:
-        cache_dir = os.path.dirname(cache_file)
-        if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-        with open(cache_file, 'w') as f:
-            json.dump(cache, f)
-    except Exception as e:
-        print(f"Warning: Could not save script cache: {e}")
+    _save_cache(cache, cache_file, 'script cache')
 
 
 def load_html_cache(cache_file):
     """Load the HTML cache mapping (hash -> filename)."""
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Warning: Could not load HTML cache: {e}")
-    return {}
+    return _load_cache(cache_file, 'HTML cache')
 
 
 def save_html_cache(cache, cache_file):
     """Save the HTML cache mapping."""
-    try:
-        cache_dir = os.path.dirname(cache_file)
-        if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-        with open(cache_file, 'w') as f:
-            json.dump(cache, f)
-    except Exception as e:
-        print(f"Warning: Could not save HTML cache: {e}")
+    _save_cache(cache, cache_file, 'HTML cache')
 
 
 def load_cert_cache(cache_file):
     """Load the certificate cache mapping (hash -> filename)."""
-    if os.path.exists(cache_file):
-        try:
-            with open(cache_file, 'r') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Warning: Could not load certificate cache: {e}")
-    return {}
+    return _load_cache(cache_file, 'certificate cache')
 
 
 def save_cert_cache(cache, cache_file):
     """Save the certificate cache mapping."""
-    try:
-        cache_dir = os.path.dirname(cache_file)
-        if cache_dir:
-            os.makedirs(cache_dir, exist_ok=True)
-        with open(cache_file, 'w') as f:
-            json.dump(cache, f)
-    except Exception as e:
-        print(f"Warning: Could not save certificate cache: {e}")
+    _save_cache(cache, cache_file, 'certificate cache')
 
 
 def get_script_hash(content):

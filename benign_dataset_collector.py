@@ -100,36 +100,31 @@ def save_cache(path, cache):
 
 
 def read_urls_from_file(path):
-    """Read URLs from either a JSON array file"""
+    """Read URLs from a JSON array file."""
     with open(path, "r", encoding="utf-8") as f:
         content = f.read().strip()
+
+    if not content:
+        return []
+
     try:
         data = json.loads(content)
+        if not isinstance(data, list):
+            raise ValueError("JSON input must be an array of URL strings.")
+
+        urls = []
+        for item in data:
+            if isinstance(item, str):
+                url = item.strip()
+                if url:
+                    urls.append(url)
+            elif isinstance(item, dict) and "url" in item and isinstance(item["url"], str):
+                url = item["url"].strip()
+                if url:
+                    urls.append(url)
+        return urls
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in input file: {e}") from e
-
-    if not isinstance(data, list):
-        raise ValueError("JSON input must be an array of URL strings.")
-
-    urls = []
-    for item in data:
-        if isinstance(item, str):
-            url = item.strip()
-            if url:
-                urls.append(url)
-        elif isinstance(item, dict) and "url" in item and isinstance(item["url"], str):
-            url = item["url"].strip()
-            if url:
-                urls.append(url)
-        return urls
-
-    urls = []
-    for line in content.splitlines():
-        url = line.strip()
-        if not url or url.startswith("#"):
-            continue
-        urls.append(url)
-    return urls
 
 
 def get_user_agent_label(user_agent):
@@ -387,7 +382,7 @@ def main():
     parser.add_argument(
         "--file",
         required=True,
-        help="Input file: JSON array of URLs or plain text with one URL per line",
+        help="Input file: JSON array of URLs",
     )
     parser.add_argument("--limit", type=int, help="Max URLs to process")
     args = parser.parse_args()

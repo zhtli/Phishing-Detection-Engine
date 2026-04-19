@@ -24,9 +24,11 @@ from web_fetch import (
 DATA_DIR = "data"
 SCRIPT_DIR = f"{DATA_DIR}/JS"
 HTML_DIR = f"{DATA_DIR}/HTML"
+CERT_DIR = f"{DATA_DIR}/CERT"
 LAST_ANALYSIS_FILE = ".last_analysis_time.json"
 SCRIPT_CACHE_FILE = f"{SCRIPT_DIR}/.script_cache.json"  # Maps content hashes to saved filenames
 HTML_CACHE_FILE = f"{HTML_DIR}/.html_cache.json"  # Maps content hashes to saved filenames
+CERT_CACHE_FILE = f"{CERT_DIR}/.cert_cache.json"  # Maps certificate hashes to saved filenames
 PHISHTANK_CSV_URL = "http://data.phishtank.com/data/online-valid.csv"
 PHISHTANK_HEADERS = {
     "User-Agent": "phishtank"
@@ -85,6 +87,7 @@ _session_id = ""  # Will be set at runtime with UTC timestamp including seconds
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(HTML_DIR, exist_ok=True)
 os.makedirs(SCRIPT_DIR, exist_ok=True)
+os.makedirs(CERT_DIR, exist_ok=True)
 
 
 
@@ -277,15 +280,15 @@ def save_and_exit(signum=None, frame=None):
     print("\n\nReceived interrupt signal. Saving progress...")
     
     # Save script cache
-    save_script_cache(_script_cache)
+    save_script_cache(_script_cache, SCRIPT_CACHE_FILE)
     print(f"Script cache updated with {len(_script_cache)} total entries")
     
     # Save HTML cache
-    save_html_cache(_html_cache)
+    save_html_cache(_html_cache, HTML_CACHE_FILE)
     print(f"HTML cache updated with {len(_html_cache)} total entries")
 
     # Save certificate cache
-    save_cert_cache(_cert_cache)
+    save_cert_cache(_cert_cache, CERT_CACHE_FILE)
     print(f"Certificate cache updated with {len(_cert_cache)} total entries")
     
     # Save dataset
@@ -488,7 +491,11 @@ def save_data(  url,
 
     # Save certificate file for HTTPS targets and validate at retrieval time
     cert_target_url = final_url if final_url else url
-    cert_file, cert_valid, cert_error, cert_cache = save_certificate_file(cert_target_url, cert_cache)
+    cert_file, cert_valid, cert_error, cert_cache = save_certificate_file(
+        cert_target_url,
+        cert_cache,
+        CERT_DIR
+    )
     
     # Create metadata entry
     entry = create_entry(
@@ -576,13 +583,13 @@ def main():
     _current_total = total
     
     # Load script cache for deduplication
-    _script_cache = load_script_cache()
+    _script_cache = load_script_cache(SCRIPT_CACHE_FILE)
     print(f"Loaded script cache with {len(_script_cache)} entries")
     
-    _html_cache = load_html_cache()
+    _html_cache = load_html_cache(HTML_CACHE_FILE)
     print(f"Loaded HTML cache with {len(_html_cache)} entries")
 
-    _cert_cache = load_cert_cache()
+    _cert_cache = load_cert_cache(CERT_CACHE_FILE)
     print(f"Loaded certificate cache with {len(_cert_cache)} entries")
     
     try:
@@ -624,15 +631,15 @@ def main():
         save_and_exit()
     
     # Save script cache
-    save_script_cache(_script_cache)
+    save_script_cache(_script_cache, SCRIPT_CACHE_FILE)
     print(f"\nScript cache updated with {len(_script_cache)} total entries")
     
     # Save HTML cache
-    save_html_cache(_html_cache)
+    save_html_cache(_html_cache, HTML_CACHE_FILE)
     print(f"HTML cache updated with {len(_html_cache)} total entries")
 
     # Save certificate cache
-    save_cert_cache(_cert_cache)
+    save_cert_cache(_cert_cache, CERT_CACHE_FILE)
     print(f"Certificate cache updated with {len(_cert_cache)} total entries")
     
     # Save dataset

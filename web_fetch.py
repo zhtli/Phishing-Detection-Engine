@@ -9,71 +9,71 @@ import socket
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
-# Configuration
-SCRIPT_DIR = "data/JS"
-CERT_DIR = "data/CERT"
-SCRIPT_CACHE_FILE = f"{SCRIPT_DIR}/.script_cache.json"
-HTML_CACHE_FILE = "data/.html_cache.json"  # Maps content hashes to saved filenames
-CERT_CACHE_FILE = f"{CERT_DIR}/.cert_cache.json"  # Maps certificate hashes to saved filenames
 
-
-def load_script_cache():
+def load_script_cache(cache_file):
     """Load the script cache mapping (hash -> filename)."""
-    if os.path.exists(SCRIPT_CACHE_FILE):
+    if os.path.exists(cache_file):
         try:
-            with open(SCRIPT_CACHE_FILE, 'r') as f:
+            with open(cache_file, 'r') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Warning: Could not load script cache: {e}")
     return {}
 
 
-def save_script_cache(cache):
+def save_script_cache(cache, cache_file):
     """Save the script cache mapping."""
     try:
-        with open(SCRIPT_CACHE_FILE, 'w') as f:
+        cache_dir = os.path.dirname(cache_file)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        with open(cache_file, 'w') as f:
             json.dump(cache, f)
     except Exception as e:
         print(f"Warning: Could not save script cache: {e}")
 
 
-def load_html_cache():
+def load_html_cache(cache_file):
     """Load the HTML cache mapping (hash -> filename)."""
-    if os.path.exists(HTML_CACHE_FILE):
+    if os.path.exists(cache_file):
         try:
-            with open(HTML_CACHE_FILE, 'r') as f:
+            with open(cache_file, 'r') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Warning: Could not load HTML cache: {e}")
     return {}
 
 
-def save_html_cache(cache):
+def save_html_cache(cache, cache_file):
     """Save the HTML cache mapping."""
     try:
-        os.makedirs(os.path.dirname(HTML_CACHE_FILE), exist_ok=True)
-        with open(HTML_CACHE_FILE, 'w') as f:
+        cache_dir = os.path.dirname(cache_file)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        with open(cache_file, 'w') as f:
             json.dump(cache, f)
     except Exception as e:
         print(f"Warning: Could not save HTML cache: {e}")
 
 
-def load_cert_cache():
+def load_cert_cache(cache_file):
     """Load the certificate cache mapping (hash -> filename)."""
-    if os.path.exists(CERT_CACHE_FILE):
+    if os.path.exists(cache_file):
         try:
-            with open(CERT_CACHE_FILE, 'r') as f:
+            with open(cache_file, 'r') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Warning: Could not load certificate cache: {e}")
     return {}
 
 
-def save_cert_cache(cache):
+def save_cert_cache(cache, cache_file):
     """Save the certificate cache mapping."""
     try:
-        os.makedirs(CERT_DIR, exist_ok=True)
-        with open(CERT_CACHE_FILE, 'w') as f:
+        cache_dir = os.path.dirname(cache_file)
+        if cache_dir:
+            os.makedirs(cache_dir, exist_ok=True)
+        with open(cache_file, 'w') as f:
             json.dump(cache, f)
     except Exception as e:
         print(f"Warning: Could not save certificate cache: {e}")
@@ -138,7 +138,7 @@ def fetch_certificate_for_url(url, timeout=10):
         return '', '', False, f'Certificate retrieval failed: {e}'
 
 
-def save_certificate_file(url, cert_cache):
+def save_certificate_file(url, cert_cache, cert_dir):
     """Save certificate as PEM file with deduplication.
 
     Returns:
@@ -152,7 +152,7 @@ def save_certificate_file(url, cert_cache):
     if cert_fingerprint in cert_cache:
         return cert_cache[cert_fingerprint], cert_valid, cert_error, cert_cache
 
-    os.makedirs(CERT_DIR, exist_ok=True)
+    os.makedirs(cert_dir, exist_ok=True)
     parsed = urlparse(url)
     host_name = parsed.hostname if parsed.hostname else 'unknown_host'
     cert_filename = f'{host_name}.pem'
@@ -160,14 +160,14 @@ def save_certificate_file(url, cert_cache):
     counter = 1
     full_filename = cert_filename
 
-    while os.path.exists(os.path.join(CERT_DIR, full_filename)):
+    while os.path.exists(os.path.join(cert_dir, full_filename)):
         full_filename = f"{base_name}_{counter}.pem"
         counter += 1
 
     cert_filename = full_filename
 
     try:
-        cert_path = os.path.join(CERT_DIR, cert_filename)
+        cert_path = os.path.join(cert_dir, cert_filename)
         with open(cert_path, 'w', encoding='utf-8') as f:
             f.write(cert_pem)
         cert_cache[cert_fingerprint] = cert_filename
@@ -259,6 +259,15 @@ def fetch_website(url, user_agent=None):
     
     try:
         resp = requests.get(url, headers=headers, timeout=10, verify=False)
+        content_type = (resp.headers.get('Content-Type') or '').lower()
+        is_html = ('text/html' in content_type) or ('application/xhtml+xml' in content_type)
+
+        if not is_html:
+            print(f"Non-HTML content type received: '{content_type or 'unknown'}'")
+            raise ValueError(
+                f"Non-HTML content type received: '{content_type or 'unknown'}'"
+            )
+
         html = resp.text
         status_code = resp.status_code
         redirect_count = len(resp.history)

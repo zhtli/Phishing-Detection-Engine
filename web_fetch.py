@@ -247,10 +247,9 @@ def fetch_website(url, user_agent=None):
         is_html = ('text/html' in content_type) or ('application/xhtml+xml' in content_type)
 
         if not is_html:
-            print(f"Non-HTML content type received: '{content_type or 'unknown'}'")
-            raise ValueError(
-                f"Non-HTML content type received: '{content_type or 'unknown'}'"
-            )
+            print(f"Warning: Non-HTML content type received: '{content_type or 'unknown'}'")
+            return '', [], resp.status_code, len(resp.history), resp.url, resp.reason
+
 
         html = resp.text
         status_code = resp.status_code

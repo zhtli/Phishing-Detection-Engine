@@ -211,3 +211,5 @@ data/
 *.csv
 
 .last_analysis_time.json
+
+benign_data/

@@ -8,11 +8,14 @@ import json
 import signal
 import sys
 from dataclasses import dataclass, asdict
-from web_code_manager import (
+from web_fetch import (
     load_script_cache,
     save_script_cache,
     load_html_cache,
     save_html_cache,
+    load_cert_cache,
+    save_cert_cache,
+    save_certificate_file,
     get_script_hash,
     extract_script_name,
     fetch_website,
@@ -36,13 +39,8 @@ PROFILE_MUTATIONS = [
     "bot",
     "amazonaws",
     "phishtank",
-    "dwcp",
     "google",
-    "atn",
-    "curl",
-    "facebook",
-    "crawler",
-    "katipo"]
+    "curl"]
 
 @dataclass
 class DatasetEntry:
@@ -54,7 +52,10 @@ class DatasetEntry:
     redirect_count: int = 0
     html_file: str = ''
     js_files: str = ''  # Pipe-separated list of JS filenames
-    user_agent: str = ''  # User agent label used (e.g., 'desktop', 'android')
+    cert_file: str = ''
+    cert_valid: bool = False
+    cert_error_message: str = ''
+    user_agent: str = ''  # User agent label used (e.g., 'desktop', 'android', 'bot')
     error: bool = False
     error_message: str = ''
 
@@ -76,6 +77,7 @@ class DatasetEntry:
 _dataset_entries = []
 _script_cache = {}
 _html_cache = {}
+_cert_cache = {}
 _current_total = 0
 _session_id = ""  # Will be set at runtime with UTC timestamp including seconds
 
@@ -83,6 +85,7 @@ _session_id = ""  # Will be set at runtime with UTC timestamp including seconds
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(HTML_DIR, exist_ok=True)
 os.makedirs(SCRIPT_DIR, exist_ok=True)
+
 
 
 def generate_session_id():
@@ -195,7 +198,19 @@ def get_user_agent_label(user_agent):
     else:
         return user_agent
 
-def create_entry(url, final_url='', status_code=0, redirect_count=0, html_file='', js_files=None, user_agent='', reason='', error=False, error_message='') -> DatasetEntry:
+def create_entry(url,
+                final_url='',
+                status_code=0,
+                redirect_count=0, 
+                html_file='', 
+                js_files=None, 
+                cert_file='', 
+                cert_valid=False, 
+                cert_error_message='', 
+                user_agent='', 
+                reason='', 
+                error=False, 
+                error_message='') -> DatasetEntry:
     """Create a metadata entry.
     
     Args:
@@ -205,6 +220,9 @@ def create_entry(url, final_url='', status_code=0, redirect_count=0, html_file='
         redirect_count: Number of redirects
         html_file: Filename of saved HTML file
         js_files: List of JS file paths referenced by this URL
+        cert_file: Filename of saved certificate file
+        cert_valid: Whether certificate validation passed at retrieval time
+        cert_error_message: Certificate retrieval/validation error message
         user_agent: User agent label used for the request (e.g., 'desktop', 'android')
         reason: HTTP response reason phrase
         error: Whether an error occurred
@@ -224,6 +242,9 @@ def create_entry(url, final_url='', status_code=0, redirect_count=0, html_file='
         redirect_count=redirect_count,
         html_file=html_file,
         js_files='|'.join(js_files),  # Store as pipe-separated list
+        cert_file=cert_file,
+        cert_valid=cert_valid,
+        cert_error_message=cert_error_message,
         user_agent=user_agent,
         error=error,
         error_message=error_message
@@ -262,14 +283,13 @@ def save_and_exit(signum=None, frame=None):
     # Save HTML cache
     save_html_cache(_html_cache)
     print(f"HTML cache updated with {len(_html_cache)} total entries")
+
+    # Save certificate cache
+    save_cert_cache(_cert_cache)
+    print(f"Certificate cache updated with {len(_cert_cache)} total entries")
     
     # Save dataset
     save_dataset_to_csv()
-    
-    # Save the current analysis timestamp
-    current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
-    save_last_analysis_time(current_time)
-    print(f"Analysis timestamp saved.")
     
     print(f"\nProcessed {len(_dataset_entries)} out of {_current_total} URLs before interruption.")
     sys.exit(0)
@@ -366,11 +386,10 @@ def save_html_file(url, html, html_cache):
     return html_file, html_cache
 
 
-def save_js_files(url, js_scripts, script_cache):
+def save_js_files(js_scripts, script_cache):
     """Save JavaScript files with deduplication.
     
     Args:
-        url: The original URL
         js_scripts: List of tuples (script_src, script_content)
         script_cache: Dictionary mapping content hashes to saved filenames
     
@@ -432,7 +451,18 @@ def save_js_files(url, js_scripts, script_cache):
     return saved_js_files, script_cache
 
 
-def save_data(url, html, js_scripts, status_code, redirect_count, final_url, reason, script_cache, html_cache, user_agent=''):
+def save_data(  url,
+                html,
+                js_scripts,
+                status_code,
+                redirect_count,
+                final_url,
+                reason,
+                script_cache,
+                html_cache,
+                cert_cache,
+                user_agent=''
+                ):
     """Save HTML and JS files, return metadata entry.
     
     Args:
@@ -448,13 +478,17 @@ def save_data(url, html, js_scripts, status_code, redirect_count, final_url, rea
         user_agent: User agent label used for the request
     
     Returns:
-        Tuple: (entry, updated_script_cache, updated_html_cache)
+        Tuple: (entry, updated_script_cache, updated_html_cache, updated_cert_cache)
     """
     # Save HTML file with deduplication
     html_file, html_cache = save_html_file(url, html, html_cache)
     
     # Save JavaScript files with deduplication
-    saved_js_files, script_cache = save_js_files(url, js_scripts, script_cache)
+    saved_js_files, script_cache = save_js_files(js_scripts, script_cache)
+
+    # Save certificate file for HTTPS targets and validate at retrieval time
+    cert_target_url = final_url if final_url else url
+    cert_file, cert_valid, cert_error, cert_cache = save_certificate_file(cert_target_url, cert_cache)
     
     # Create metadata entry
     entry = create_entry(
@@ -464,14 +498,17 @@ def save_data(url, html, js_scripts, status_code, redirect_count, final_url, rea
         redirect_count=redirect_count,
         html_file=html_file,
         js_files=saved_js_files,
+        cert_file=cert_file,
+        cert_valid=cert_valid,
+        cert_error_message=cert_error,
         user_agent=user_agent,
         reason=reason
     )
     
-    return entry, script_cache, html_cache
+    return entry, script_cache, html_cache, cert_cache
 
 def main():
-    global _dataset_entries, _script_cache, _html_cache, _current_total, _session_id
+    global _dataset_entries, _script_cache, _html_cache, _cert_cache, _current_total, _session_id
 
     
     # Generate session ID with UTC timestamp
@@ -484,13 +521,13 @@ def main():
     parser = argparse.ArgumentParser(description='Collect phishing dataset from URL list')
     parser.add_argument('--file', help='Input file containing URLs')
     parser.add_argument('--download', action='store_true', help='Download PhishTank CSV from online-valid.csv')
-    parser.add_argument('--limit', type=int, default=10, help='Max URLs to process')
+    parser.add_argument('--limit', type=int, help='Max URLs to process')
     parser.add_argument('--format', choices=['phishtank'], default='phishtank', help='Input format (default: phishtank)')
-    parser.add_argument('-a', '--all', action='store_true', help='Process all URLs')
     parser.add_argument('--days', type=int, help='Process URLs from the last x days')
     parser.add_argument('--since', type=str, help='Process URLs since this timestamp (ISO format: 2026-04-06T10:12:29+00:00)')
     parser.add_argument('--use-last', action='store_true', help='Use the last analysis time as reference')
     args = parser.parse_args()
+
 
     if args.format == 'phishtank':
         print("Reading URLs from PhishTank CSV...")
@@ -524,11 +561,13 @@ def main():
         exit(1)
 
     urls = [u for u in urls if u]
-    # Process all filtered URLs if using time-based filters or --all flag
-    if args.all or args.days or args.since or args.use_last:
-        total = len(urls)
-    else: 
+    if args.limit:
         total = min(args.limit, len(urls))
+    else: 
+        total = len(urls)
+        current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
+        save_last_analysis_time(current_time)
+        print(f"Analysis timestamp saved. Next time, use --use-last to continue from here.")
     
     if total == 0:
         print("No URLs to process with the given filters.")
@@ -542,17 +581,20 @@ def main():
     
     _html_cache = load_html_cache()
     print(f"Loaded HTML cache with {len(_html_cache)} entries")
+
+    _cert_cache = load_cert_cache()
+    print(f"Loaded certificate cache with {len(_cert_cache)} entries")
     
     try:
         for idx, url in enumerate(urls[:total]):
             print(f"[{idx+1}/{total}] Processing: {url}")
             
-            for agent_idx, user_agent in enumerate(PROFILE_MUTATIONS):
+            for user_agent in PROFILE_MUTATIONS:
                 user_agent_label = get_user_agent_label(user_agent)
                 
                 try:
                     html, js_scripts, status_code, redirect_count, final_url, reason = fetch_website(url, user_agent=user_agent)
-                    entry, _script_cache, _html_cache = save_data(
+                    entry, _script_cache, _html_cache, _cert_cache = save_data(
                         url=url, 
                         html=html, 
                         js_scripts=js_scripts, 
@@ -562,10 +604,10 @@ def main():
                         reason=reason,
                         script_cache=_script_cache,
                         html_cache=_html_cache,
+                        cert_cache=_cert_cache,
                         user_agent=user_agent_label
                     )
                     _dataset_entries.append(entry)
-                    print(f"    ✓ HTTP {status_code} | HTML: {entry.html_file} | JS files: {len(entry.js_files.split('|')) if entry.js_files else 0}")
                 except Exception as e:
                     print(f"Warning: {e}")
                     entry = create_entry(
@@ -588,15 +630,13 @@ def main():
     # Save HTML cache
     save_html_cache(_html_cache)
     print(f"HTML cache updated with {len(_html_cache)} total entries")
+
+    # Save certificate cache
+    save_cert_cache(_cert_cache)
+    print(f"Certificate cache updated with {len(_cert_cache)} total entries")
     
     # Save dataset
     save_dataset_to_csv()
-    
-    # Save the current analysis timestamp
-    if not args.limit:
-        current_time = datetime.now(datetime.now().astimezone().tzinfo).isoformat()
-        save_last_analysis_time(current_time)
-        print(f"Analysis timestamp saved. Next time, use --use-last to continue from here.")
 
 if __name__ == "__main__":
     urllib3.disable_warnings()

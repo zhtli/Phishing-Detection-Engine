@@ -18,27 +18,55 @@ def get_root_domain(hostname):
     return ".".join(parts[-2:]) if len(parts) >= 2 else hostname
 
 
-def extract_unique_https_domains(dataset_path):
-    dataset = pd.read_csv(dataset_path)
-    if "url" not in dataset.columns:
-        raise ValueError(f"Missing 'url' column in {dataset_path}")
-
+def extract_unique_https_domains(dataset_paths):
     seen_domains = set()
     domain_sources = {}
 
-    for url in dataset["url"]:
-        if not (isinstance(url, str) and url.strip() and url.lower().startswith("https://")):
+    for dataset_path in dataset_paths:
+        try:
+            dataset = pd.read_csv(dataset_path)
+        except Exception as e:
+            print(f"Warning: failed to read dataset {dataset_path}: {e}")
             continue
 
-        hostname = urlparse(url).netloc.split("@")[ -1].split(":")[0].lower()
-        domain = get_root_domain(hostname)
-        if not domain or domain in seen_domains:
+        if "url" not in dataset.columns:
+            print(f"Warning: missing 'url' column in {dataset_path}")
             continue
 
-        seen_domains.add(domain)
-        domain_sources[domain] = url
+        if "cert_valid" not in dataset.columns:
+            print(f"Warning: missing 'cert_valid' column in {dataset_path}")
+            continue
+
+        for url, cert_valid in zip(dataset["url"], dataset["cert_valid"]):
+            if not cert_valid:
+                continue
+
+            if not (isinstance(url, str) and url.strip()):
+                continue
+
+            hostname = urlparse(url).netloc.split("@")[ -1].split(":")[0].lower()
+            domain = get_root_domain(hostname)
+            if not domain or domain in seen_domains:
+                continue
+
+            seen_domains.add(domain)
+            domain_sources[domain] = url
 
     return domain_sources
+
+
+def collect_dataset_paths(dataset_dirs):
+    dataset_paths = []
+    for dataset_dir in dataset_dirs:
+        if not os.path.isdir(dataset_dir):
+            print(f"Warning: dataset directory not found: {dataset_dir}")
+            continue
+
+        for name in sorted(os.listdir(dataset_dir)):
+            if name.lower().endswith(".csv"):
+                dataset_paths.append(os.path.join(dataset_dir, name))
+
+    return dataset_paths
 
 
 def load_domain_cache(cache_path):
@@ -109,18 +137,19 @@ def main():
         description="Search crt.sh for unique HTTPS root domains in a dataset and save all certificate results."
     )
     parser.add_argument(
-        "--dataset",
-        default="data/dataset_20260412_203835.csv",
-        help="Path to CSV dataset containing a 'url' column.",
+        "--dataset-dirs",
+        nargs="*",
+        default=["data/benign_data", "data/phish_data"],
+        help="Directories to scan for dataset CSVs when --dataset is not provided.",
     )
     parser.add_argument(
         "--output-dir",
-        default="data/certs",
+        default="data/cert_logs",
         help="Directory where crt.sh lookup outputs will be saved.",
     )
     parser.add_argument(
         "--cache-file",
-        default="data/certs/searched_domains_cache.json",
+        default="data/cert_logs/searched_domains_cache.json",
         help="Path to persistent cache file for already-searched domains.",
     )
     parser.add_argument(
@@ -130,7 +159,12 @@ def main():
     )
     args = parser.parse_args()
 
-    domain_sources = extract_unique_https_domains(args.dataset)
+    dataset_paths = collect_dataset_paths(args.dataset_dirs)
+    if not dataset_paths:
+        raise SystemExit("No dataset CSV files found. Check --dataset-dirs.")
+
+    print(f"Datasets loaded: {len(dataset_paths)}")
+    domain_sources = extract_unique_https_domains(dataset_paths)
     print(f"Unique HTTPS root domains found: {len(domain_sources)}")
 
     cached_domains = set() if args.ignore_cache else load_domain_cache(args.cache_file)

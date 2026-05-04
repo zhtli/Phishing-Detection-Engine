@@ -8,7 +8,7 @@ import urllib3
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
-from web_fetch import (
+from collectors.web_fetch import (
     get_script_hash,
     extract_script_name,
     fetch_website,
@@ -21,7 +21,7 @@ from web_fetch import (
     save_cert_cache,
 )
 
-DATA_DIR = "benign_data"
+DATA_DIR = "data/benign_data"
 SCRIPT_DIR = f"{DATA_DIR}/JS"
 HTML_DIR = f"{DATA_DIR}/HTML"
 CERT_DIR = f"{DATA_DIR}/CERT"
@@ -110,6 +110,7 @@ def read_urls_from_file(path):
         return urls
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in input file: {e}") from e
+
 
 
 def get_user_agent_label(user_agent):
@@ -363,9 +364,9 @@ def main():
 
     signal.signal(signal.SIGINT, save_and_exit)
 
-    parser = argparse.ArgumentParser(description="Collect benign dataset from URL lists")
+    parser = argparse.ArgumentParser(description="Collect benign dataset from search terms")
     parser.add_argument(
-        "--file",
+        "--urls-file",
         required=True,
         help="Input file: JSON array of URLs",
     )
@@ -373,10 +374,12 @@ def main():
     args = parser.parse_args()
 
     try:
-        urls = read_urls_from_file(args.file)
+        urls = read_urls_from_file(args.urls_file)
     except ValueError as e:
-        print(f"Error reading URL file: {e}")
+        print(f"Error reading URLs file: {e}")
         sys.exit(1)
+    urls = [u for u in urls if u]
+
     urls = [u for u in urls if u]
 
     total = min(args.limit, len(urls)) if args.limit else len(urls)
@@ -398,38 +401,39 @@ def main():
 
     try:
         for idx, url in enumerate(urls[:total]):
-            print(f"[{idx + 1}/{total}] Processing: {url}")
+            if idx >= 4196:
+                print(f"[{idx + 1}/{total}] Processing: {url}")
 
-            for user_agent in PROFILE_MUTATIONS:
-                user_agent_label = get_user_agent_label(user_agent)
+                for user_agent in PROFILE_MUTATIONS:
+                    user_agent_label = get_user_agent_label(user_agent)
 
-                try:
-                    html, js_scripts, status_code, redirect_count, final_url, reason = fetch_website(
-                        url, user_agent=user_agent
-                    )
-                    entry, _script_cache, _html_cache, _cert_cache = save_data(
-                        url=url,
-                        html=html,
-                        js_scripts=js_scripts,
-                        status_code=status_code,
-                        redirect_count=redirect_count,
-                        final_url=final_url,
-                        reason=reason,
-                        script_cache=_script_cache,
-                        html_cache=_html_cache,
-                        cert_cache=_cert_cache,
-                        user_agent=user_agent_label,
-                    )
-                    _dataset_entries.append(entry)
-                except Exception as e:
-                    print(f"Warning: {e}")
-                    entry = create_entry(
-                        url=url,
-                        user_agent=user_agent_label,
-                        error=True,
-                        error_message=str(e),
-                    )
-                    _dataset_entries.append(entry)
+                    try:
+                        html, js_scripts, status_code, redirect_count, final_url, reason = fetch_website(
+                            url, user_agent=user_agent
+                        )
+                        entry, _script_cache, _html_cache, _cert_cache = save_data(
+                            url=url,
+                            html=html,
+                            js_scripts=js_scripts,
+                            status_code=status_code,
+                            redirect_count=redirect_count,
+                            final_url=final_url,
+                            reason=reason,
+                            script_cache=_script_cache,
+                            html_cache=_html_cache,
+                            cert_cache=_cert_cache,
+                            user_agent=user_agent_label,
+                        )
+                        _dataset_entries.append(entry)
+                    except Exception as e:
+                        print(f"Warning: {e}")
+                        entry = create_entry(
+                            url=url,
+                            user_agent=user_agent_label,
+                            error=True,
+                            error_message=str(e),
+                        )
+                        _dataset_entries.append(entry)
 
     except KeyboardInterrupt:
         save_and_exit()

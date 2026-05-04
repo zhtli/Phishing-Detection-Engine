@@ -8,7 +8,7 @@ import json
 import signal
 import sys
 from dataclasses import dataclass, asdict
-from web_fetch import (
+from collectors.web_fetch import (
     load_script_cache,
     save_script_cache,
     load_html_cache,
@@ -21,7 +21,7 @@ from web_fetch import (
     fetch_website,
 )
 
-DATA_DIR = "data"
+DATA_DIR = "data/phish_data"
 SCRIPT_DIR = f"{DATA_DIR}/JS"
 HTML_DIR = f"{DATA_DIR}/HTML"
 CERT_DIR = f"{DATA_DIR}/CERT"

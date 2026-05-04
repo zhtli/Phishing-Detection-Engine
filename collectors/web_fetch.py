@@ -259,5 +259,4 @@ def fetch_website(url, user_agent=None):
         js_scripts = extract_and_fetch_scripts(html, url, headers=headers)
         return html, js_scripts, status_code, redirect_count, final_url, reason
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
         raise Exception(f"Failed to fetch {url}: {e}")

@@ -21,7 +21,7 @@ from collectors.web_fetch import (
     fetch_website,
 )
 
-DATA_DIR = "data/phish_data"
+DATA_DIR = "../data/phish_data"
 SCRIPT_DIR = f"{DATA_DIR}/JS"
 HTML_DIR = f"{DATA_DIR}/HTML"
 CERT_DIR = f"{DATA_DIR}/CERT"

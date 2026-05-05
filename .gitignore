@@ -213,3 +213,5 @@ data/
 .last_analysis_time.json
 
 benign_data/
+output/
+log/

@@ -4,3 +4,10 @@ pandas
 pycrtsh
 ddgs
 cryptography
+tldextract
+tqdm
+pygtrie
+editdistance
+pyenchant
+sklearn
+lime

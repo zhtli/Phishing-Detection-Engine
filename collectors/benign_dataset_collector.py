@@ -21,7 +21,7 @@ from collectors.web_fetch import (
     save_cert_cache,
 )
 
-DATA_DIR = "data/benign_data"
+DATA_DIR = "../data/benign_data"
 SCRIPT_DIR = f"{DATA_DIR}/JS"
 HTML_DIR = f"{DATA_DIR}/HTML"
 CERT_DIR = f"{DATA_DIR}/CERT"

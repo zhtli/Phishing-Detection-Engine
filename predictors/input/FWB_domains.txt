@@ -1,0 +1,15 @@
+wixstudio.com
+weebly.com
+weeblysite.com
+framer.app
+pages.dev
+vercel.app
+blogspot.com
+webflow.io
+zapier.app
+netlify.app
+webcindario.com
+github.io
+amazonaws.com
+wixsite.com
+gitbook.io

@@ -11,3 +11,5 @@ editdistance
 pyenchant
 sklearn
 lime
+pydantic
+pymongo

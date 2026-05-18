@@ -121,7 +121,7 @@ def _collect_dataset_features(url):
         "cert_valid": cert_valid_value,
     }
     dataset_features.update(cert_feature_values)
-    return dataset_features
+    return dataset_features, final_url
 
 
 def _apply_dataset_features(feature_row, dataset_features):
@@ -221,11 +221,12 @@ def main():
     with open(model_path, "rb") as model_file:
         model = pickle.load(model_file)
 
-    feature_row = _extract_feature_row(args.url)
-    dataset_features = _collect_dataset_features(args.url)
+    
+    dataset_features, final_url = _collect_dataset_features(args.url)
+    feature_row = _extract_feature_row(final_url)
     feature_row = _apply_dataset_features(feature_row, dataset_features)
     test_vector, missing, extra = _vector_from_features(feature_row, feature_cols)
-
+    
     pred = model.predict(test_vector)[0]
     proba = model.predict_proba(test_vector)[0]
     class_names = [str(label) for label in model.classes_]
@@ -233,6 +234,8 @@ def main():
 
     print("URL:", args.url)
     print("Model file:", model_path)
+    print("Final URL after redirects:", final_url)
+    print("Extracted features:", feature_row)
     print("Prediction:", pred)
     print("Probabilities (%):", class_probs)
 

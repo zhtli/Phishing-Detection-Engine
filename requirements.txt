@@ -9,9 +9,16 @@ tqdm
 pygtrie
 editdistance
 pyenchant
-sklearn
+scikit-learn
 lime
 pydantic
 pymongo
 xgboost
 lightgbm
+dnspython
+httpx
+asyncwhois
+whodap
+icmplib
+geoip2
+joblib

@@ -215,3 +215,5 @@ data/
 benign_data/
 output/
 log/
+
+GeoLite2-DB/

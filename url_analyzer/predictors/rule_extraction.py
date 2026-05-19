@@ -2,10 +2,10 @@ from tqdm import tqdm
 
 from traceback import format_exc
 
-from ns_log import NsLog
-from url_rules import url_rules
-from active_rules import active_rules
-from cert_features import cert_features
+from url_analyzer.predictors.ns_log import NsLog
+from url_analyzer.predictors.url_rules import url_rules
+from url_analyzer.predictors.active_rules import active_rules
+from url_analyzer.predictors.cert_features import cert_features
 
 
 class rule_extraction:

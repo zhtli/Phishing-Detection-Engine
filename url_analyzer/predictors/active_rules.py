@@ -5,7 +5,7 @@ from traceback import format_exc
 import requests
 import pprint
 import datetime
-from ns_log import NsLog
+from url_analyzer.predictors.ns_log import NsLog
 
 class active_rules:
     def __init__(self):

@@ -8,7 +8,7 @@ import json
 import signal
 import sys
 from dataclasses import dataclass, asdict
-from collectors.web_fetch import (
+from url_analyzer.collectors.web_fetch import (
     load_script_cache,
     save_script_cache,
     load_html_cache,

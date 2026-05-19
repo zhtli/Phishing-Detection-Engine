@@ -8,7 +8,7 @@ import urllib3
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
-from collectors.web_fetch import (
+from url_analyzer.collectors.web_fetch import (
     get_script_hash,
     extract_script_name,
     fetch_website,

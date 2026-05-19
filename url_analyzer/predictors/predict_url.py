@@ -18,11 +18,11 @@ ROOT_DIR = BASE_DIR.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from domain_parser import domain_parser
-from json2csv import json2csv
-from rule_extraction import rule_extraction
-from cert_features import cert_features
-from collectors.web_fetch import fetch_certificate_for_url, fetch_website
+from url_analyzer.predictors.domain_parser import domain_parser
+from url_analyzer.predictors.json2csv import json2csv
+from url_analyzer.predictors.rule_extraction import rule_extraction
+from url_analyzer.predictors.cert_features import cert_features
+from url_analyzer.collectors.web_fetch import fetch_certificate_for_url, fetch_website
 
 
 FEATURE_COLS = [

@@ -5,11 +5,11 @@ import os
 
 import pandas as pd
 
-from ns_log import NsLog
-from json2csv import json2csv
+from url_analyzer.predictors.ns_log import NsLog
+from url_analyzer.predictors.json2csv import json2csv
 from traceback import format_exc
-from domain_parser import domain_parser
-from rule_extraction import rule_extraction
+from url_analyzer.predictors.domain_parser import domain_parser
+from url_analyzer.predictors.rule_extraction import rule_extraction
 
 
 class Preprocessing():

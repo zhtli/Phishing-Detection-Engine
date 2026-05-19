@@ -2,7 +2,7 @@ import csv
 from io import StringIO
 from traceback import format_exc
 
-from url_analyzer.predictors.ns_log import NsLog
+from predictors.ns_log import NsLog
 
 
 class json2csv:

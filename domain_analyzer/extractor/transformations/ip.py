@@ -87,7 +87,6 @@ class IPTransformation(Transformation):
             lambda ip_data: mean_of_existing_values(
                 [ip['average_rtt'] for ip in ip_data]) if ip_data is not None else 0)
 
-        # TODO: Add NERD features
 
         # Ratio of IPv4 addresses (from A records) to all addresses (from A and AAAA records)
         df["ip_v4_ratio"] = df.apply(

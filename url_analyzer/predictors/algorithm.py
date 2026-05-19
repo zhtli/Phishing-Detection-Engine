@@ -10,15 +10,15 @@ from traceback import format_exc
 
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.tree import DecisionTreeClassifier
-from url_analyzer.predictors.domain_parser import domain_parser
+from predictors.domain_parser import domain_parser
 from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import confusion_matrix
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score
 
-from url_analyzer.predictors.ns_log import NsLog
-from url_analyzer.predictors.json2csv import json2csv
-from url_analyzer.predictors.rule_extraction import rule_extraction
+from predictors.ns_log import NsLog
+from predictors.json2csv import json2csv
+from predictors.rule_extraction import rule_extraction
 
 
 class machine_learning_algorithm():

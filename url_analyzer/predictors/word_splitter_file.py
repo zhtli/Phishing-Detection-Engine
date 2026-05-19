@@ -3,7 +3,7 @@ import re
 import pprint
 import enchant
 from traceback import format_exc
-from url_analyzer.predictors.ns_log import NsLog
+from predictors.ns_log import NsLog
 
 
 class WordSplitterClass(object):

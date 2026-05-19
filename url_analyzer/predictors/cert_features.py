@@ -5,7 +5,7 @@ from pathlib import Path
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 
-from url_analyzer.predictors.ns_log import NsLog
+from predictors.ns_log import NsLog
 
 
 class cert_features:

@@ -1,7 +1,7 @@
 
 import tldextract
 import re
-from url_analyzer.predictors.ns_log import NsLog
+from predictors.ns_log import NsLog
 from tqdm import tqdm
 
 class domain_parser(object):

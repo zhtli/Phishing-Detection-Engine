@@ -6,12 +6,12 @@ import sys
 import pickle
 import numpy as np
 import editdistance
-import url_analyzer.predictors.gib_detect_train as gib_detect_train
+import predictors.gib_detect_train as gib_detect_train
 import os
 
 from traceback import format_exc
 
-from url_analyzer.predictors.ns_log import NsLog
+from predictors.ns_log import NsLog
 
 
 class nlp_class:

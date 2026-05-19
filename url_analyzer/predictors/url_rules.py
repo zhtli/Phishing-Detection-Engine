@@ -8,10 +8,10 @@ import requests
 import os
 
 from traceback import format_exc
-from url_analyzer.predictors.word_with_nlp import nlp_class
-from url_analyzer.predictors.word_splitter_file import WordSplitterClass
+from predictors.word_with_nlp import nlp_class
+from predictors.word_splitter_file import WordSplitterClass
 
-from url_analyzer.predictors.ns_log import NsLog
+from predictors.ns_log import NsLog
 
 
 class url_rules:

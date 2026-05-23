@@ -22,3 +22,6 @@ whodap
 icmplib
 geoip2
 joblib
+fastapi
+uvicorn
+lxml

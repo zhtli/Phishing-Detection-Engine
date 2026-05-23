@@ -227,8 +227,8 @@ def extract_and_fetch_scripts(html, base_url, headers):
     return js_scripts
 
 
-def fetch_website(url, user_agent=None):
-    """Fetch website HTML and associated JavaScript files.
+def fetch_website(url, user_agent=None, fetch_scripts=True):
+    """Fetch website HTML and optionally associated JavaScript files.
     
     Args:
         url: The URL to fetch
@@ -256,7 +256,10 @@ def fetch_website(url, user_agent=None):
         redirect_count = len(resp.history)
         final_url = resp.url
         reason = resp.reason
-        js_scripts = extract_and_fetch_scripts(html, url, headers=headers)
+        if fetch_scripts:
+            js_scripts = extract_and_fetch_scripts(html, url, headers=headers)
+        else:
+            js_scripts = []
         return html, js_scripts, status_code, redirect_count, final_url, reason
     except Exception as e:
         raise Exception(f"Failed to fetch {url}: {e}")

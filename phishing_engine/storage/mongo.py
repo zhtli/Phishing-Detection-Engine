@@ -71,18 +71,6 @@ class MongoStore:
         self.collection.update_one({"_id": normalized}, update, upsert=True)
         return normalized
 
-    def add_urls(self, urls, label: Optional[str] = None, source: Optional[str] = None, limit: Optional[int] = None) -> int:
-        """Upsert many URLs with the same label/source; returns how many were stored."""
-        count = 0
-        for url in urls:
-            if not url:
-                continue
-            self.add_url(url, label=label, source=source)
-            count += 1
-            if limit and count >= limit:
-                break
-        return count
-
     def store_domain_record(self, normalized_url: str, record: dict) -> None:
         """Attach a collected raw domain record to a URL document under ``raw.domain_record``."""
         now = self._now()
@@ -115,15 +103,6 @@ class MongoStore:
         elif require == "content":
             query["raw.content"] = {"$exists": True}
 
-        cursor = self.collection.find(query)
-        if limit:
-            cursor = cursor.limit(limit)
-        for doc in cursor:
-            yield doc
-
-    def iter_missing(self, raw_key: str, limit: int = 0) -> Iterator[dict]:
-        """Iterate documents lacking ``raw.<raw_key>`` (for enrichment collectors)."""
-        query = {f"raw.{raw_key}": {"$exists": False}}
         cursor = self.collection.find(query)
         if limit:
             cursor = cursor.limit(limit)

@@ -9,7 +9,7 @@ class DomainStage(BaseStage):
     """Second stage: DNS/IP/RDAP/WHOIS features over a raw domain record.
 
     At prediction time it collects the record live; for training it reads the record the
-    enrichment collector stored under ``raw.domain_record``.
+    collect CLI stored under ``raw.domain_record``.
     """
 
     stage_id = "domain"

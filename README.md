@@ -13,10 +13,10 @@ responsibilities:
 ```
             sources                         MongoDB (raw data)              models on disk
   ┌──────────────────────────┐        ┌──────────────────────────┐
-  │ PhishTank / Tranco /      │  write │ url_documents:           │  read   ┌──────────────┐
-  │ search  (URL + label)     │ ─────▶ │  url, label, source,     │ ──────▶ │  TRAINING    │ ──▶ *.joblib / *.pkl
-  │ domain record (DNS/IP/    │        │  raw.domain_record,      │         │  pipeline    │
-  │ RDAP), page content       │        │  raw.content (html/tls)  │         └──────────────┘
+  │ PhishTank / Tranco /     │  write │ url_documents:           │  read   ┌──────────────┐
+  │ search  (URL + label)    │ ─────> │  url, label, source,     │ ──────> │  TRAINING    │ ──▶ *.joblib / *.pkl
+  │ domain record (DNS/IP/   │        │  raw.domain_record,      │         │  pipeline    │
+  │ RDAP), page content      │        │  raw.content (html/tls)  │         └──────────────┘
   └──────────────────────────┘        └──────────────────────────┘
         COLLECTORS (cron)                   (collectors are the ONLY writers)
 
@@ -97,14 +97,12 @@ pip install -r requirements.txt
 ## Collectors (run by cron — the only Mongo writers)
 
 ```bash
-# URL-list sources
+# URL-list sources. Each command collects URLs AND fills in their raw
+# data (raw.domain_record / raw.content) in the same run, processing every
+# stored URL still missing that data.
 python -m phishing_engine.cli.collect phishtank --limit 2000
 python -m phishing_engine.cli.collect tranco --list-path tranco.csv --sample-size 500
 python -m phishing_engine.cli.collect search --terms-file terms.txt --max-results 10
-
-# Per-URL raw enrichment (fill in raw.domain_record / raw.content for stored URLs)
-python -m phishing_engine.cli.collect enrich-domain  --limit 300
-python -m phishing_engine.cli.collect enrich-content --limit 300
 ```
 
 Example crontab:
@@ -112,15 +110,13 @@ Example crontab:
 ```cron
 */30 * * * * cd /srv/engine && python -m phishing_engine.cli.collect phishtank --limit 2000
 0    3 * * * cd /srv/engine && python -m phishing_engine.cli.collect tranco --list-path /srv/engine/tranco.csv --sample-size 2000
-15   * * * * cd /srv/engine && python -m phishing_engine.cli.collect enrich-domain  --limit 300
-45   * * * * cd /srv/engine && python -m phishing_engine.cli.collect enrich-content --limit 300
 ```
 
 ## Training
 
 ```bash
 python -m phishing_engine.cli.train --stage url      # trains phishing_engine/models/url_model.pkl
-python -m phishing_engine.cli.train --stage domain   # retrain domain model
+python -m phishing_engine.cli.train --stage domain   # trains domain model
 python -m phishing_engine.cli.train --stage content  # trains content model
 python -m phishing_engine.cli.train --stage all --model-type gradient_boosting
 ```

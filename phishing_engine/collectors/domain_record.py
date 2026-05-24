@@ -1,6 +1,6 @@
 """Collects a raw domain record (DNS / IP / RDAP / WHOIS) for a URL.
 
-Used both by the enrichment collector (which stores the record in MongoDB) and by the
+Used both by the collect CLI (which stores the record in MongoDB) and by the
 prediction pipeline's domain stage (which collects in-memory and never stores).
 """
 from __future__ import annotations
@@ -67,7 +67,7 @@ async def collect_domain_record(
     """Asynchronously gather DNS, IP (RDAP/ASN/Geo/RTT) and domain RDAP/WHOIS data.
 
     Returns the canonical raw domain-record dict consumed by the domain feature
-    extractor — the same shape the enrichment collector stores in MongoDB. ``geo_reader``
+    extractor — the same shape the collect CLI stores in MongoDB. ``geo_reader``
     /``asn_reader`` are open GeoLite2 readers (or None); RTT pings are opt-in.
     """
     domain_name = extract_domain(url)

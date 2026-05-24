@@ -1,6 +1,6 @@
 """Collects raw page content (HTML + TLS) for a URL.
 
-Used both by the enrichment collector (which stores the content in MongoDB) and by the
+Used both by the collect CLI (which stores the content in MongoDB) and by the
 prediction pipeline's content stage (which collects in-memory and never stores).
 JavaScript is never fetched/executed — HTML only.
 """

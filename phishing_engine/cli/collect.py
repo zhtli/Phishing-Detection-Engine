@@ -2,18 +2,14 @@
 
 Each subcommand is self-contained and designed to be driven by a cronjob:
 
-    # URL-list sources (label + source only)
+    # URL-list sources. As each URL is collected it is stored and its raw
+    # data (domain record + page content)
     python -m phishing_engine.cli.collect phishtank --limit 1000
     python -m phishing_engine.cli.collect tranco --list-path tranco.csv --sample-size 500
     python -m phishing_engine.cli.collect search --terms-file terms.txt --max-results 10
 
-    # Per-URL raw enrichment (stores raw domain records / page content)
-    python -m phishing_engine.cli.collect enrich-domain --limit 200
-    python -m phishing_engine.cli.collect enrich-content --limit 200
-
 Example crontab:
     */30 * * * * cd /srv/engine && python -m phishing_engine.cli.collect phishtank --limit 2000
-    15 * * * *   cd /srv/engine && python -m phishing_engine.cli.collect enrich-domain --limit 300
 """
 from __future__ import annotations
 
@@ -37,36 +33,34 @@ def _store(args) -> MongoStore:
 
 
 def cmd_phishtank(args) -> int:
-    """Fetch phishing URLs from PhishTank and store them labeled ``phish``."""
+    """Fetch phishing URLs from PhishTank, store them, and collect their raw data inline."""
     from phishing_engine.collectors.sources.phishtank import fetch_phishtank_urls
 
     store = _store(args)
     try:
         urls = fetch_phishtank_urls(limit=args.limit, days=args.days, since=args.since)
-        count = store.add_urls(urls, label="phish", source="phishtank", limit=args.limit)
-        print(f"phishtank: stored {count} URLs")
+        _ingest(store, urls, label="phish", source="phishtank", limit=args.limit, args=args)
     finally:
         store.close()
     return 0
 
 
 def cmd_tranco(args) -> int:
-    """Sample benign domains from a Tranco list and store them labeled ``benign``."""
+    """Sample benign domains from a Tranco list, store them, and collect their raw data inline."""
     from phishing_engine.collectors.sources.tranco import sample_tranco_domains
 
     store = _store(args)
     try:
         domains = sample_tranco_domains(args.list_path, args.sample_size, seed=args.seed)
-        urls = [f"http://{domain}" for domain in domains]
-        count = store.add_urls(urls, label="benign", source="tranco", limit=args.sample_size)
-        print(f"tranco: stored {count} URLs")
+        urls = [f"https://{domain}" for domain in domains]
+        _ingest(store, urls, label="benign", source="tranco", limit=args.sample_size, args=args)
     finally:
         store.close()
     return 0
 
 
 def cmd_search(args) -> int:
-    """Search the given terms and store the resulting benign URLs labeled ``benign``."""
+    """Search the given terms, store the benign URLs, and collect their raw data inline."""
     from phishing_engine.collectors.sources.search import load_search_terms, search_urls_for_terms
 
     store = _store(args)
@@ -75,65 +69,83 @@ def cmd_search(args) -> int:
         if args.limit_terms:
             terms = terms[: args.limit_terms]
         urls = search_urls_for_terms(terms, max_results=args.max_results)
-        count = store.add_urls(urls, label="benign", source="search", limit=args.limit_urls)
-        print(f"search: stored {count} URLs")
+        _ingest(store, urls, label="benign", source="search", limit=args.limit_urls, args=args)
     finally:
         store.close()
     return 0
 
 
-def cmd_enrich_domain(args) -> int:
-    """For stored URLs missing a domain record, collect one and store it under raw.domain_record."""
+def _collect_for_url(store, url, normalized, args) -> tuple[bool, bool]:
+    """Collect & store the raw domain record and page content for one freshly stored URL.
+
+    The two fetches are independent — a failure on
+    one is logged and skipped so the rest of the run keeps going.
+    """
+    from phishing_engine.collectors.content import collect_content
     from phishing_engine.collectors.domain_record import collect_domain_record_sync
 
-    store = _store(args)
-    stored = 0
-    failed = 0
+    domain_ok = False
     try:
-        for document in store.iter_missing("domain_record", limit=args.limit):
-            url = document.get("url") or document.get("_id")
-            try:
-                record = collect_domain_record_sync(
-                    url,
-                    timeout=args.timeout,
-                    geoip_city_db=args.geoip_city_db,
-                    geoip_asn_db=args.geoip_asn_db,
-                    rtt_enabled=args.rtt,
-                )
-            except Exception as exc:  # cron resilience: skip and continue
-                failed += 1
-                print(f"enrich-domain: failed {url}: {exc}", file=sys.stderr)
-                continue
-            store.store_domain_record(document["_id"], record)
-            stored += 1
-        print(f"enrich-domain: stored {stored}, failed {failed}")
-    finally:
-        store.close()
-    return 0
+        record = collect_domain_record_sync(
+            url,
+            timeout=args.timeout,
+            geoip_city_db=args.geoip_city_db,
+            geoip_asn_db=args.geoip_asn_db,
+            rtt_enabled=args.rtt,
+        )
+        store.store_domain_record(normalized, record)
+        domain_ok = True
+    except Exception as exc:
+        print(f"collect-domain: failed {url}: {exc}", file=sys.stderr)
 
-
-def cmd_enrich_content(args) -> int:
-    """For stored URLs missing page content, fetch HTML+TLS and store it under raw.content."""
-    from phishing_engine.collectors.content import collect_content
-
-    store = _store(args)
-    stored = 0
-    failed = 0
+    content_ok = False
     try:
-        for document in store.iter_missing("content", limit=args.limit):
-            url = document.get("url") or document.get("_id")
-            try:
-                content = collect_content(url, tls_timeout=args.tls_timeout, max_html_bytes=args.max_html_bytes)
-            except Exception as exc:  # cron resilience: skip and continue
-                failed += 1
-                print(f"enrich-content: failed {url}: {exc}", file=sys.stderr)
-                continue
-            store.store_content(document["_id"], content)
-            stored += 1
-        print(f"enrich-content: stored {stored}, failed {failed}")
-    finally:
-        store.close()
-    return 0
+        content = collect_content(url, tls_timeout=args.tls_timeout, max_html_bytes=args.max_html_bytes)
+        store.store_content(normalized, content)
+        content_ok = True
+    except Exception as exc:
+        print(f"collect-content: failed {url}: {exc}", file=sys.stderr)
+
+    return domain_ok, content_ok
+
+
+def _ingest(store, urls, *, label, source, limit, args) -> int:
+    """Store each URL and immediately collect its raw domain record + page content."""
+    stored = 0
+    domain_ok = 0
+    content_ok = 0
+    for url in urls:
+        if not url:
+            continue
+        normalized = store.add_url(url, label=label, source=source)
+        d, c = _collect_for_url(store, url, normalized, args)
+        domain_ok += d
+        content_ok += c
+        stored += 1
+        if limit and stored >= limit:
+            break
+    print(f"{source}: stored {stored} URLs (domain {domain_ok}, content {content_ok})")
+    return stored
+
+
+def _add_domain_collect_args(p) -> None:
+    """Add the domain-record collection options used by inline enrichment."""
+    p.add_argument("--timeout", type=float, default=5.0, help="DNS/RDAP timeout (s)")
+    p.add_argument("--geoip-city-db", default=DEFAULT_CITY_DB, help="GeoLite2 City DB path")
+    p.add_argument("--geoip-asn-db", default=DEFAULT_ASN_DB, help="GeoLite2 ASN DB path")
+    p.add_argument("--rtt", action="store_true", help="Enable ICMP RTT measurement")
+
+
+def _add_content_collect_args(p) -> None:
+    """Add the page-content collection options used by inline enrichment."""
+    p.add_argument("--tls-timeout", type=float, default=10.0, help="TLS handshake timeout (s)")
+    p.add_argument("--max-html-bytes", type=int, help="Max HTML bytes to store")
+
+
+def _add_collect_args(p) -> None:
+    """Add the collection tuning options to a URL-collection subcommand."""
+    _add_domain_collect_args(p)
+    _add_content_collect_args(p)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,12 +158,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=None, help="Only URLs verified in the last N days")
     p.add_argument("--since", default=None, help="Only URLs verified since ISO timestamp")
     p.add_argument("--limit", type=int, default=None, help="Max URLs to collect")
+    _add_collect_args(p)
     p.set_defaults(func=cmd_phishtank)
 
     p = sub.add_parser("tranco", help="Collect benign domains from a Tranco list")
     p.add_argument("--list-path", required=True, help="Path to Tranco list file")
     p.add_argument("--sample-size", type=int, default=100, help="Number of domains to sample")
     p.add_argument("--seed", type=int, default=None, help="Random seed")
+    _add_collect_args(p)
     p.set_defaults(func=cmd_tranco)
 
     p = sub.add_parser("search", help="Collect benign URLs from search terms")
@@ -159,21 +173,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit-terms", type=int, default=None, help="Limit number of search terms")
     p.add_argument("--max-results", type=int, default=10, help="Max results per term")
     p.add_argument("--limit-urls", type=int, default=None, help="Max URLs to collect")
+    _add_collect_args(p)
     p.set_defaults(func=cmd_search)
-
-    p = sub.add_parser("enrich-domain", help="Collect & store raw domain records for URLs missing them")
-    p.add_argument("--limit", type=int, default=100, help="Max documents to enrich")
-    p.add_argument("--timeout", type=float, default=5.0, help="DNS/RDAP timeout (s)")
-    p.add_argument("--geoip-city-db", default=DEFAULT_CITY_DB, help="GeoLite2 City DB path")
-    p.add_argument("--geoip-asn-db", default=DEFAULT_ASN_DB, help="GeoLite2 ASN DB path")
-    p.add_argument("--rtt", action="store_true", help="Enable ICMP RTT measurement")
-    p.set_defaults(func=cmd_enrich_domain)
-
-    p = sub.add_parser("enrich-content", help="Collect & store raw page content (HTML+TLS) for URLs missing it")
-    p.add_argument("--limit", type=int, default=100, help="Max documents to enrich")
-    p.add_argument("--tls-timeout", type=float, default=10.0, help="TLS handshake timeout (s)")
-    p.add_argument("--max-html-bytes", type=int, default=500000, help="Max HTML bytes to store")
-    p.set_defaults(func=cmd_enrich_content)
 
     return parser
 

@@ -19,9 +19,9 @@ Certificates inside `raw.content.tls` are stored as DER bytes (`certificates_der
 content feature extractor reconstructs them at feature time.
 
 ### API
-- **Writes (collectors):** `add_url` / `add_urls` (URL + label + source),
-  `store_domain_record`, `store_content`.
+- **Writes (collectors):** `add_url` (URL + label + source), `store_domain_record`,
+  `store_content`.
 - **Reads (training):** `iter_labeled(require=...)` yields labeled docs that have the
-  required raw data; `iter_missing(raw_key)` yields docs still needing enrichment.
+  required raw data.
 
 Indexes on `domain` and `label` are created on connect.

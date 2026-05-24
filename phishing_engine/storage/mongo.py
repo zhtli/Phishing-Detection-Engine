@@ -1,159 +1,135 @@
+"""MongoDB raw-data store.
+
+This is the ONLY component that writes to MongoDB. Collectors use it to persist the
+raw data they extract from sources (URL lists, domain records, page content). The
+training pipeline uses the read helpers; the prediction pipeline never touches Mongo.
+
+Document schema (one per normalized URL, keyed by ``_id``):
+
+    {
+      "_id": <normalized_url>,
+      "url": <original_url>,
+      "normalized_url": <normalized_url>,
+      "domain": <domain>,
+      "label": "phish" | "benign" | None,
+      "source": <collector source>,
+      "created_at", "updated_at": <datetime>,
+      "raw": {
+        "domain_record": { ... DNS/IP/RDAP record ... },
+        "content": { "html": ..., "tls": { ... }, ... }
+      },
+      "raw_collected": { "domain_record_at": ..., "content_at": ... }
+    }
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Iterator, Optional
 
 from pymongo import MongoClient
 
-from phishing_engine.pipeline import StageResult
+from phishing_engine.core.urls import extract_domain, normalize_url
 
 
 class MongoStore:
-    def __init__(
-        self,
-        uri: str,
-        database: str,
-        collection: str,
-        benign_collection: Optional[str] = None,
-        phish_collection: Optional[str] = None,
-    ):
+    """Read/write handle for the single URL-documents collection.
+
+    Writes are used by the collectors only; ``iter_*`` reads are used by training.
+    """
+
+    def __init__(self, uri: str, database: str, collection: str):
+        """Connect and ensure the ``domain`` and ``label`` indexes exist."""
         self.client = MongoClient(uri)
         self.collection = self.client[database][collection]
         self.collection.create_index("domain")
         self.collection.create_index("label")
 
-        self.benign_collection = (
-            self.client[database][benign_collection] if benign_collection else None
-        )
-        self.phish_collection = (
-            self.client[database][phish_collection] if phish_collection else None
-        )
-        self._label_collections = {
-            "benign": self.benign_collection,
-            "phish": self.phish_collection,
-        }
-
-        for collection_obj in self._label_collections.values():
-            if collection_obj is None:
-                continue
-            collection_obj.create_index("domain")
-            collection_obj.create_index("label")
-
-    def _now(self):
+    def _now(self) -> datetime:
         return datetime.now(timezone.utc)
 
-    def _label_collection(self, label: Optional[str]):
-        if not label:
-            return None
-        return self._label_collections.get(label.lower())
+    # ------------------------------------------------------------------ writes
 
-    def _update_label_collection(self, label: Optional[str], normalized_url: str, update: dict) -> None:
-        collection_obj = self._label_collection(label)
-        if not collection_obj:
-            return
-        collection_obj.update_one({"_id": normalized_url}, update, upsert=True)
-
-    def upsert_base(
-        self,
-        url: str,
-        normalized_url: str,
-        domain: str,
-        label: Optional[str] = None,
-        source: Optional[str] = None,
-    ) -> None:
+    def add_url(self, url: str, label: Optional[str] = None, source: Optional[str] = None) -> str:
+        """Upsert a URL document with its label/source. Returns the normalized URL."""
+        normalized = normalize_url(url)
+        domain = extract_domain(normalized)
         now = self._now()
+
         update = {
             "$setOnInsert": {
-                "_id": normalized_url,
+                "_id": normalized,
                 "url": url,
-                "normalized_url": normalized_url,
+                "normalized_url": normalized,
                 "domain": domain,
                 "created_at": now,
             },
-            "$set": {
-                "updated_at": now,
-            },
+            "$set": {"updated_at": now},
         }
-
         if label or source:
-            update["$set"].update(
-                {
-                    "label": label,
-                    "label_source": source,
-                    "label_updated_at": now,
-                }
-            )
-            update.setdefault("$addToSet", {}).update(
-                {
-                    "label_history": {
-                        "label": label,
-                        "source": source,
-                        "added_at": now,
-                    }
-                }
-            )
+            update["$set"].update({"label": label, "source": source})
 
-        self.collection.update_one({"_id": normalized_url}, update, upsert=True)
-        self._update_label_collection(label, normalized_url, update)
+        self.collection.update_one({"_id": normalized}, update, upsert=True)
+        return normalized
 
-    def update_stage_result(
-        self,
-        normalized_url: str,
-        stage_id: str,
-        result: StageResult,
-        label: Optional[str] = None,
-    ) -> None:
+    def add_urls(self, urls, label: Optional[str] = None, source: Optional[str] = None, limit: Optional[int] = None) -> int:
+        """Upsert many URLs with the same label/source; returns how many were stored."""
+        count = 0
+        for url in urls:
+            if not url:
+                continue
+            self.add_url(url, label=label, source=source)
+            count += 1
+            if limit and count >= limit:
+                break
+        return count
+
+    def store_domain_record(self, normalized_url: str, record: dict) -> None:
+        """Attach a collected raw domain record to a URL document under ``raw.domain_record``."""
         now = self._now()
-        payload = {
-            "label": result.label,
-            "probabilities": result.probabilities,
-            "confidence": result.confidence,
-            "decision": result.decision,
-            "features": result.features,
-            "artifacts": result.artifacts,
-            "missing_features": result.missing_features,
-            "extra_features": result.extra_features,
-            "error": result.error,
-            "updated_at": now,
-        }
         self.collection.update_one(
             {"_id": normalized_url},
-            {"$set": {f"stages.{stage_id}": payload, "updated_at": now}},
+            {"$set": {"raw.domain_record": record, "raw_collected.domain_record_at": now, "updated_at": now}},
             upsert=True,
-        )
-        self._update_label_collection(
-            label,
-            normalized_url,
-            {"$set": {f"stages.{stage_id}": payload, "updated_at": now}},
         )
 
-    def update_decision(
-        self,
-        normalized_url: str,
-        decision: str,
-        stage_id: str,
-        result: StageResult,
-        label: Optional[str] = None,
-    ) -> None:
+    def store_content(self, normalized_url: str, content: dict) -> None:
+        """Attach collected raw page content to a URL document under ``raw.content``."""
         now = self._now()
-        payload = {
-            "decision": decision,
-            "stage_id": stage_id,
-            "label": result.label,
-            "confidence": result.confidence,
-            "probabilities": result.probabilities,
-            "decided_at": now,
-        }
         self.collection.update_one(
             {"_id": normalized_url},
-            {"$set": {"last_decision": payload, "updated_at": now}},
+            {"$set": {"raw.content": content, "raw_collected.content_at": now, "updated_at": now}},
             upsert=True,
         )
-        self._update_label_collection(
-            label,
-            normalized_url,
-            {"$set": {"last_decision": payload, "updated_at": now}},
-        )
+
+    # ------------------------------------------------------------------- reads
+
+    def iter_labeled(self, require: Optional[str] = None, limit: int = 0) -> Iterator[dict]:
+        """Iterate documents that carry a label.
+
+        ``require`` may be ``"domain_record"`` or ``"content"`` to only yield documents
+        that already have that raw data collected.
+        """
+        query: dict = {"label": {"$in": ["phish", "benign"]}}
+        if require == "domain_record":
+            query["raw.domain_record"] = {"$exists": True}
+        elif require == "content":
+            query["raw.content"] = {"$exists": True}
+
+        cursor = self.collection.find(query)
+        if limit:
+            cursor = cursor.limit(limit)
+        for doc in cursor:
+            yield doc
+
+    def iter_missing(self, raw_key: str, limit: int = 0) -> Iterator[dict]:
+        """Iterate documents lacking ``raw.<raw_key>`` (for enrichment collectors)."""
+        query = {f"raw.{raw_key}": {"$exists": False}}
+        cursor = self.collection.find(query)
+        if limit:
+            cursor = cursor.limit(limit)
+        for doc in cursor:
+            yield doc
 
     def close(self) -> None:
+        """Close the MongoDB client connection."""
         self.client.close()

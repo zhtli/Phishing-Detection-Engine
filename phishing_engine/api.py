@@ -1,3 +1,8 @@
+"""FastAPI service exposing the prediction pipeline over HTTP.
+
+A single ``Pipeline`` is built lazily on first request and reused. Like the CLI, the
+service never writes to MongoDB. Config path comes from ``PHISHING_ENGINE_CONFIG``.
+"""
 from __future__ import annotations
 
 import os
@@ -6,13 +11,12 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from phishing_engine.config import load_config
-from phishing_engine.pipeline import Pipeline
-from phishing_engine.registry import build_stages
-from phishing_engine.storage.mongo import MongoStore
-from phishing_engine.utils import result_to_dict
+from phishing_engine.core.config import load_config
+from phishing_engine.core.pipeline import Pipeline
+from phishing_engine.core.registry import build_stages
+from phishing_engine.core.serialization import result_to_dict
 
-import phishing_engine.stages  # noqa: F401
+import phishing_engine.stages  # noqa: F401  (registers stages)
 
 CONFIG_PATH = os.getenv("PHISHING_ENGINE_CONFIG", "config/pipeline.json")
 
@@ -22,45 +26,27 @@ _pipeline: Optional[Pipeline] = None
 
 class PredictRequest(BaseModel):
     url: str
-    mode: str = "predict"
-    label: Optional[str] = None
-    source: Optional[str] = None
 
 
 def get_pipeline() -> Pipeline:
+    """Return the process-wide pipeline, building it from config on first call."""
     global _pipeline
-    if _pipeline is not None:
-        return _pipeline
-
-    config = load_config(CONFIG_PATH)
-    stages = build_stages(config.pipeline.stages)
-    mongo = config.pipeline.mongo
-    store = MongoStore(
-        mongo.uri,
-        mongo.database,
-        mongo.collection,
-        benign_collection=mongo.benign_collection,
-        phish_collection=mongo.phish_collection,
-    )
-    _pipeline = Pipeline(stages, store=store)
+    if _pipeline is None:
+        config = load_config(CONFIG_PATH)
+        _pipeline = Pipeline(build_stages(config.pipeline.stages))
     return _pipeline
 
 
 @app.get("/health")
 def health():
+    """Liveness probe."""
     return {"status": "ok"}
 
 
 @app.post("/predict")
 def predict(request: PredictRequest):
+    """Score a URL and return the full pipeline result; 500 on any failure."""
     try:
-        pipeline = get_pipeline()
-        result = pipeline.run(
-            request.url,
-            mode=request.mode,
-            label=request.label,
-            source=request.source,
-        )
-        return result_to_dict(result)
+        return result_to_dict(get_pipeline().run(request.url))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))

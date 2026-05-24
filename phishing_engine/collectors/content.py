@@ -11,6 +11,7 @@ from typing import Optional
 from phishing_engine.collectors.web_fetch import fetch_website
 from phishing_engine.collectors.tls import fetch_tls_data
 
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 
 def collect_content(url: str, tls_timeout: float = 10.0, max_html_bytes: Optional[int] = None) -> dict:
     """Fetch a page's HTML and a TLS summary into one serializable dict.
@@ -19,9 +20,9 @@ def collect_content(url: str, tls_timeout: float = 10.0, max_html_bytes: Optiona
     redirects, final_url, tls) is BSON-serializable so the content collector can store it
     verbatim; the content stage uses the same dict in-memory at prediction time.
     """
-    html, _, status_code, redirect_count, final_url, reason = fetch_website(
+    html, status_code, redirect_count, final_url, reason = fetch_website(
         url,
-        fetch_scripts=False,
+        user_agent=USER_AGENT
     )
 
     if max_html_bytes is not None and html:

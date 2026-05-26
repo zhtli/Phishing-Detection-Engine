@@ -191,38 +191,13 @@ class CompatibilityTransformation:
             return dt.replace(tzinfo=UTC)
         return dt.astimezone(UTC)
 
-    @staticmethod
-    def _make_ip_average_rtt(results_for_ip: dict) -> float:
-        """
-        Calculates the average round-trip time (RTT) for the IP addresses related to a domain name.
-
-        If an IP result does not have the 'average_rtt' key or if the key's value is not a number, the result is not
-        included in the calculation. If none of the IP results have the 'average_rtt' key, the method returns 0.0.
-
-        Args:
-            results_for_ip (dict): A dictionary containing the results from the IP-based collectors.
-
-        Returns:
-            float: The average round-trip time (RTT) for the IP address.
-        """
-        count = 0
-        total = 0
-        for collector, results in results_for_ip.items():
-            if collector.startswith("rtt") and results["statusCode"] == 0:
-                data = results.get("data", {})
-                col_count = data.get("received", 0)
-                count += col_count
-                total += data.get("avg", 0) * col_count
-
-        return total / count if count > 0 else 0.0
-
     def _make_ip_data(self, data: dict) -> list[dict]:
         """
         Extracts and formats the IP data from the raw data.
 
         This method takes a dictionary of raw data as input and extracts the IP data. The IP data includes information
         about the IP address, the record from which it was obtained, ASN details, RDAP details, geolocation details,
-        average round-trip time (RTT), and NERD reputation.
+        and NERD reputation.
 
         The method returns a list of dictionaries, each representing an IP address and its associated data. If the IP
         data is not present in the raw data, an empty list is returned.
@@ -232,7 +207,7 @@ class CompatibilityTransformation:
 
         Returns:
             list[dict]: A list of dictionaries representing the IP data. Each dictionary contains the IP address and its
-            associated data, including ASN details, RDAP details, geolocation details, average RTT, and NERD reputation.
+            associated data, including ASN details, RDAP details, geolocation details, and NERD reputation.
         """
 
         schema_ip_data = data.get("ip_data")
@@ -272,17 +247,12 @@ class CompatibilityTransformation:
                 if isinstance(ip_version, str) and ip_version.isdigit():
                     rdap["ip_version"] = int(ip_version)
 
-            average_rtt = get_safe(ip_entry, "remarks.average_rtt")
-            if average_rtt is None:
-                average_rtt = 0.0
-
             ret.append({
                 "ip": ip_value,
                 "from_record": ip_entry.get("from_record"),
                 "asn": asn if asn else None,
                 "rdap": rdap if rdap else None,
                 "geo": ip_entry.get("geo"),
-                "average_rtt": average_rtt,
                 "nerd_rep": ip_entry.get("nerd_rep") or -1
             })
 

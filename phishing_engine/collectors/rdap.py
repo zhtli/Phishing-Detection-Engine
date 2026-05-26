@@ -1,9 +1,12 @@
 """RDAP/WHOIS collection helpers for the domain analyzer."""
 
+import logging
 from datetime import datetime, UTC
 
 import tldextract
 import whodap
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_rdap_datetime(value) -> datetime | None:
@@ -120,7 +123,8 @@ async def fetch_domain_rdap(domain_name: str, zone: str | None, dns_client, whoi
             rdap_dict = rdap_response.to_dict()
             rdap_data = rdap_dict
             rdap_entities = _map_rdap_entities(rdap_dict.get("entities"))
-        except Exception:
+        except Exception as exc:
+            logger.debug("RDAP lookup failed for %s.%s: %s", domain, tld, exc)
             rdap_data = None
 
     if rdap_data is None:
@@ -135,7 +139,10 @@ async def fetch_domain_rdap(domain_name: str, zone: str | None, dns_client, whoi
                         rdap_dict = rdap_response.to_dict()
                         rdap_data = rdap_dict
                         rdap_entities = _map_rdap_entities(rdap_dict.get("entities"))
-                    except Exception:
+                    except Exception as exc:
+                        logger.debug(
+                            "RDAP fallback lookup failed for %s.%s: %s", domain, tld, exc
+                        )
                         rdap_data = None
 
     whois_raw = None
@@ -143,7 +150,8 @@ async def fetch_domain_rdap(domain_name: str, zone: str | None, dns_client, whoi
     if rdap_data is None:
         try:
             whois_raw, whois_parsed = await whois_client.aio_whois(rdap_target)
-        except Exception:
+        except Exception as exc:
+            logger.debug("WHOIS lookup failed for %s: %s", rdap_target, exc)
             whois_raw = None
             whois_parsed = None
 

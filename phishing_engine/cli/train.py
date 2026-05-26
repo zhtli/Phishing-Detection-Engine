@@ -14,6 +14,7 @@ import sys
 from typing import List, Optional
 
 from phishing_engine.core.config import load_config
+from phishing_engine.core.logging_setup import configure_logging
 from phishing_engine.core.registry import get_stage
 from phishing_engine.storage.mongo import MongoStore
 from phishing_engine.core.training import train_stage
@@ -32,9 +33,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--output", default=None, help="Override output model path (single stage only)")
     args = parser.parse_args(argv)
 
+    configure_logging()
     config = load_config(args.config)
     mongo = config.pipeline.mongo
-    store = MongoStore(mongo.uri, mongo.database, mongo.collection)
+    store = MongoStore(mongo.uri, mongo.database, mongo.collection, mongo.domain_collection)
 
     stage_configs = config.pipeline.stages
     if args.stage != "all":

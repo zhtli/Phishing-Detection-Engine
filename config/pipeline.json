@@ -3,7 +3,8 @@
     "mongo": {
       "uri": "mongodb://localhost:27017",
       "database": "phishing_engine",
-      "collection": "url_documents"
+      "collection": "url_documents",
+      "domain_collection": "domain_records"
     },
     "stages": [
       {
@@ -77,8 +78,7 @@
         "options": {
           "data_dir": "phishing_engine/features/domainradar/data",
           "geoip_city_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-City.mmdb",
-          "geoip_asn_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-ASN.mmdb",
-          "rtt_enabled": false
+          "geoip_asn_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-ASN.mmdb"
         }
       },
       {

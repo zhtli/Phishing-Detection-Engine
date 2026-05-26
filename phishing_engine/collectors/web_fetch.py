@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import requests
+import urllib3
+
+# Phishing hosts routinely serve broken/self-signed certs, so we fetch with verify=False
+# on purpose; silence urllib3's per-request InsecureRequestWarning.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def fetch_website(url, user_agent=None):

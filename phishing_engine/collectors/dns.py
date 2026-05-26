@@ -1,10 +1,14 @@
 """DNS collection helpers for the domain analyzer."""
 
+import logging
+
 import dns.asyncresolver
 import dns.exception
 import dns.resolver
 import dns.rdatatype as rdt
 import tldextract
+
+logger = logging.getLogger(__name__)
 
 
 def _soa_to_dict(soa_record) -> dict | None:
@@ -47,7 +51,8 @@ async def find_zone_info(
             answer = await resolver.resolve(candidate, rdt.SOA)
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
             continue
-        except dns.exception.DNSException:
+        except dns.exception.DNSException as exc:
+            logger.debug("SOA lookup failed for %s: %s", candidate, exc)
             continue
         if answer and len(answer) > 0 and answer[0].rdtype == rdt.SOA:
             zone = candidate
@@ -62,7 +67,8 @@ async def find_zone_info(
         has_dnskey = bool(dnskey and len(dnskey) > 0)
     except dns.resolver.NoAnswer:
         has_dnskey = False
-    except dns.exception.DNSException:
+    except dns.exception.DNSException as exc:
+        logger.debug("DNSKEY lookup failed for zone %s: %s", zone, exc)
         has_dnskey = None
 
     return zone, _soa_to_dict(soa), has_dnskey
@@ -74,8 +80,10 @@ async def _resolve_record(resolver: dns.asyncresolver.Resolver, name: str, rtype
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
         return None, None, None
     except dns.exception.Timeout:
+        logger.debug("%s lookup for %s timed out", rtype, name)
         return None, None, "timeout"
     except dns.exception.DNSException as exc:
+        logger.debug("%s lookup for %s failed: %s", rtype, name, exc)
         return None, None, str(exc)
 
     ttl = answer.rrset.ttl if answer.rrset else None

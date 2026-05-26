@@ -10,7 +10,6 @@ import numpy as np
 from pandas import DataFrame
 
 from .base_transformation import Transformation
-from ._helpers import mean_of_existing_values
 
 
 def make_entropy(data):
@@ -83,10 +82,6 @@ def make_asn_features(ip_data):
 class IPTransformation(Transformation):
     def transform(self, df: DataFrame) -> DataFrame:
         df["ip_count"] = df["ip_data"].apply(lambda x: len(x) if x is not None else 0)
-        df["ip_mean_average_rtt"] = df["ip_data"].apply(
-            lambda ip_data: mean_of_existing_values(
-                [ip['average_rtt'] for ip in ip_data]) if ip_data is not None else 0)
-
 
         # Ratio of IPv4 addresses (from A records) to all addresses (from A and AAAA records)
         df["ip_v4_ratio"] = df.apply(
@@ -107,7 +102,6 @@ class IPTransformation(Transformation):
     def features(self) -> dict[str, str]:
         return {
             "ip_count": "Int64",
-            "ip_mean_average_rtt": "float64",
             "ip_v4_ratio": "float64",
             "ip_entropy": "float64",
             "ip_as_address_entropy": "float64",

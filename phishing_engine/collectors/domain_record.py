@@ -6,6 +6,7 @@ prediction pipeline's domain stage (which collects in-memory and never stores).
 from __future__ import annotations
 
 import asyncio
+import logging
 import ssl
 from datetime import datetime, UTC
 from pathlib import Path
@@ -22,10 +23,9 @@ from phishing_engine.collectors.dns import collect_dns, find_zone_info
 from phishing_engine.collectors.ip import collect_ip_entries
 from phishing_engine.collectors.rdap import fetch_domain_rdap
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_TIMEOUT = 5.0
-DEFAULT_RTT_COUNT = 3
-DEFAULT_RTT_INTERVAL = 0.2
-DEFAULT_RTT_TIMEOUT = 1.0
 
 
 def _now_utc() -> datetime:
@@ -42,7 +42,8 @@ def extract_domain(url: str) -> str:
     host = (host or "").strip().strip(".")
     try:
         return host.encode("idna").decode("ascii")
-    except (UnicodeError, AttributeError):
+    except (UnicodeError, AttributeError) as exc:
+        logger.debug("IDNA encoding failed for host %r: %s", host, exc)
         return host
 
 
@@ -58,17 +59,12 @@ async def collect_domain_record(
     timeout: float = DEFAULT_TIMEOUT,
     geo_reader: Optional[GeoIPReader] = None,
     asn_reader: Optional[GeoIPReader] = None,
-    rtt_enabled: bool = False,
-    rtt_privileged: bool = False,
-    rtt_count: int = DEFAULT_RTT_COUNT,
-    rtt_timeout: float = DEFAULT_RTT_TIMEOUT,
-    rtt_interval: float = DEFAULT_RTT_INTERVAL,
 ) -> dict:
-    """Asynchronously gather DNS, IP (RDAP/ASN/Geo/RTT) and domain RDAP/WHOIS data.
+    """Asynchronously gather DNS, IP (RDAP/ASN/Geo) and domain RDAP/WHOIS data.
 
     Returns the canonical raw domain-record dict consumed by the domain feature
     extractor — the same shape the collect CLI stores in MongoDB. ``geo_reader``
-    /``asn_reader`` are open GeoLite2 readers (or None); RTT pings are opt-in.
+    /``asn_reader`` are open GeoLite2 readers (or None).
     """
     domain_name = extract_domain(url)
     resolver = dns.asyncresolver.Resolver(configure=True)
@@ -97,11 +93,6 @@ async def collect_domain_record(
             ipv6_client,
             geo_reader,
             asn_reader,
-            rtt_enabled,
-            rtt_privileged,
-            rtt_count,
-            rtt_timeout,
-            rtt_interval,
         )
     finally:
         await dns_client.aio_close()
@@ -132,11 +123,6 @@ def collect_domain_record_sync(
     timeout: float = DEFAULT_TIMEOUT,
     geoip_city_db: Optional[str] = None,
     geoip_asn_db: Optional[str] = None,
-    rtt_enabled: bool = False,
-    rtt_privileged: bool = False,
-    rtt_count: int = DEFAULT_RTT_COUNT,
-    rtt_timeout: float = DEFAULT_RTT_TIMEOUT,
-    rtt_interval: float = DEFAULT_RTT_INTERVAL,
 ) -> dict:
     """Blocking wrapper that manages GeoIP readers and runs the async collection."""
     geo_reader = GeoIPReader(geoip_city_db) if geoip_city_db and Path(geoip_city_db).exists() else None
@@ -148,11 +134,6 @@ def collect_domain_record_sync(
                 timeout=timeout,
                 geo_reader=geo_reader,
                 asn_reader=asn_reader,
-                rtt_enabled=rtt_enabled,
-                rtt_privileged=rtt_privileged,
-                rtt_count=rtt_count,
-                rtt_timeout=rtt_timeout,
-                rtt_interval=rtt_interval,
             )
         )
     finally:

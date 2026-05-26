@@ -105,9 +105,41 @@ python -m phishing_engine.cli.collect tranco --list-path tranco.csv --sample-siz
 python -m phishing_engine.cli.collect search --terms-file terms.txt --max-results 10
 ```
 
+### Incremental PhishTank collection
+
+The `phishtank` collector runs **incrementally by default**. After each successful run it
+saves the run's start time as a watermark in Mongo (`collector_state` collection, keyed by
+`phishtank`). The next run with no explicit time filter only ingests entries verified
+since that watermark, so repeated cron runs pick up just the new feed updates instead of
+re-pulling the whole feed.
+
+```bash
+# First run — no watermark yet, so this seeds it. Pull a backfill window, e.g. last 7 days:
+python -m phishing_engine.cli.collect phishtank --days 7 --limit 2000
+
+# Subsequent runs — no time flags needed. Pulls only entries verified since the last run:
+python -m phishing_engine.cli.collect phishtank --limit 2000
+
+# Override the watermark for one run (these win over the saved watermark):
+python -m phishing_engine.cli.collect phishtank --since 2026-05-20T00:00:00Z
+python -m phishing_engine.cli.collect phishtank --days 3
+
+# Ignore the watermark and pull the entire current feed (e.g. a one-off full backfill):
+python -m phishing_engine.cli.collect phishtank --full --limit 5000
+```
+
+Notes:
+- The watermark is advanced only after a run succeeds, so a failed fetch/ingest leaves it
+  untouched and the next run retries the same window.
+- It is anchored to the run's **start** time (not end), so there's no gap at the boundary;
+  any URLs re-seen are deduped by the upsert on the URL `_id`.
+- Explicit `--since`/`--days` still advance the watermark afterward — only `--full` skips
+  reading it.
+
 Example crontab:
 
 ```cron
+# Incremental: each run pulls only feeds verified since the previous run.
 */30 * * * * cd /srv/engine && python -m phishing_engine.cli.collect phishtank --limit 2000
 0    3 * * * cd /srv/engine && python -m phishing_engine.cli.collect tranco --list-path /srv/engine/tranco.csv --sample-size 2000
 ```

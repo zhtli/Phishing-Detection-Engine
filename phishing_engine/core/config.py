@@ -50,6 +50,7 @@ class MongoConfig(BaseModel):
     uri: str = "mongodb://localhost:27017"
     database: str = "phishing_engine"
     collection: str = "url_documents"
+    domain_collection: str = "domain_records"
 
 
 class PipelineConfig(BaseModel):

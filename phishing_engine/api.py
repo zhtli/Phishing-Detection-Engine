@@ -5,6 +5,7 @@ service never writes to MongoDB. Config path comes from ``PHISHING_ENGINE_CONFIG
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
 
@@ -12,11 +13,15 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from phishing_engine.core.config import load_config
+from phishing_engine.core.logging_setup import configure_logging
 from phishing_engine.core.pipeline import Pipeline
 from phishing_engine.core.registry import build_stages
 from phishing_engine.core.serialization import result_to_dict
 
 import phishing_engine.stages  # noqa: F401  (registers stages)
+
+configure_logging()
+logger = logging.getLogger(__name__)
 
 CONFIG_PATH = os.getenv("PHISHING_ENGINE_CONFIG", "config/pipeline.json")
 
@@ -49,4 +54,5 @@ def predict(request: PredictRequest):
     try:
         return result_to_dict(get_pipeline().run(request.url))
     except Exception as exc:
+        logger.exception("prediction failed for url %r", request.url)
         raise HTTPException(status_code=500, detail=str(exc))

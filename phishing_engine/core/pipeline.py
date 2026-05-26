@@ -10,12 +10,15 @@ The pipeline never writes to MongoDB; persisting raw data is the collectors' job
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from phishing_engine.core.config import GateConfig
 from phishing_engine.core.model_runner import PredictionOutput
 from phishing_engine.core.urls import extract_domain, normalize_url
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -116,13 +119,28 @@ class BaseStage:
         return {}
 
     def run(self, context: PipelineContext) -> StageResult:
-        """Execute the full collect → extract → (optional) predict flow for one URL."""
-        artifacts = self.collect(context)
-        features = self.extract_features(context, artifacts)
+        """Execute the full collect → extract → (optional) predict flow for one URL.
 
-        prediction = None
-        if self.model_runner is not None:
-            prediction = self.predict(features, artifacts)
+        Each phase is guarded: if one raises, the traceback is logged and a short error
+        message is recorded on the ``StageResult``. The stage then produces no
+        probabilities, so the gate returns ``"continue"`` and the pipeline moves on rather
+        than crashing the whole prediction on a single stage's failure.
+        """
+        artifacts: Dict[str, object] = {}
+        features: Optional[Dict[str, object]] = None
+        prediction: Optional[PredictionOutput] = None
+        error: Optional[str] = None
+
+        try:
+            artifacts = self.collect(context)
+            features = self.extract_features(context, artifacts)
+            if self.model_runner is not None:
+                prediction = self.predict(features, artifacts)
+        except Exception as exc:
+            logger.exception(
+                "stage %r failed for url %r", self.stage_id, context.url
+            )
+            error = f"{type(exc).__name__}: {exc}"
 
         return StageResult(
             stage_id=self.stage_id,
@@ -134,6 +152,7 @@ class BaseStage:
             artifacts=artifacts,
             missing_features=prediction.missing_features if prediction else [],
             extra_features=prediction.extra_features if prediction else [],
+            error=error,
         )
 
 

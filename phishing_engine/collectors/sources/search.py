@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import csv
+import logging
 from typing import Iterable, List
 
 from ddgs import DDGS
+
+logger = logging.getLogger(__name__)
 
 
 def load_search_terms(file_path: str) -> List[str]:
@@ -24,8 +27,8 @@ def load_search_terms(file_path: str) -> List[str]:
                 value = str(row[0]).strip()
                 if value and value.lower() != "term":
                     terms.append(value)
-        except csv.Error:
-            pass
+        except csv.Error as exc:
+            logger.debug("CSV parse failed for %s, falling back to line-by-line: %s", file_path, exc)
 
     if not terms:
         with open(file_path, "r", encoding="utf-8") as handle:

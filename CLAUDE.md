@@ -87,7 +87,7 @@ entrypoint does `import phishing_engine.stages  # noqa` for this side effect. `b
 ### Feature-only degradation (key invariant)
 
 A stage whose `model_path` does **not** exist on disk is built **without** a `ModelRunner`
-(a warning is printed to stderr). It still extracts features but produces no probabilities,
+(a warning is logged). It still extracts features but produces no probabilities,
 so `gate_decision` returns `"continue"` and the URL flows to the next stage. This is
 deliberate: the engine is usable before every model is trained. The shipped
 `domain_model.joblib` works out of the box; `url` and `content` models must be trained
@@ -108,25 +108,53 @@ both predictions and probabilities.
 filled with `0.0` and reported as `missing_features`; unknown columns are reported as
 `extra_features`. This makes feature-set drift visible in the output rather than crashing.
 
+### Logging and error handling
+
+Logging uses the stdlib `logging` module. Library modules log via
+`logging.getLogger(__name__)` (the package root carries a `NullHandler`); the entry points
+(the three CLIs and the API) call `core/logging_setup.configure_logging()` once, which
+attaches a single stderr handler to the `phishing_engine` logger. Level defaults to `INFO`
+and is overridable with `PHISHING_ENGINE_LOG_LEVEL` (e.g. `DEBUG` to see the per-lookup
+network failures the collectors swallow). `BaseStage.run` guards `collect → extract →
+predict`: a raising stage is logged with a full traceback and its message is recorded on
+`StageResult.error`, so one stage's failure degrades to feature-only (gate `"continue"`)
+instead of crashing the whole prediction.
+
 ### Configuration
 
 `config/pipeline.json` drives everything (schema/validation in `core/config.py`, root key
 `pipeline`). Each stage entry has `id`, `enabled`, `model_path`, optional `feature_columns`,
 `label_map`, a `gate` block, and stage-specific `options` (timeouts, GeoIP DB paths, data
-dirs). `mongo` holds the connection (uri/database/collection).
+dirs). `mongo` holds the connection (uri/database/collection/domain_collection).
 
 ### Storage schema
 
-`storage/mongo.py` (`MongoStore`) is the sole writer. One document per normalized URL,
-keyed by `_id`:
+`storage/mongo.py` (`MongoStore`) is the sole writer, across **two collections**. The
+domain record is not embedded per URL (a domain is shared by many URLs); it is stored once
+per `(domain, collection date)` in a separate domains collection and referenced by id.
+Keying by date keeps point-in-time snapshots — a domain re-collected on a later day gets a
+new version, so a URL's training example pairs with the domain state seen when that URL was
+collected.
+
+URL collection (one document per normalized URL, keyed by `_id`):
 
 ```js
 { _id: <normalized_url>, url, normalized_url, domain,
   label: "phish"|"benign", source,
   created_at, updated_at,
-  raw: { domain_record: {...}, content: { html, tls: {...} } },
+  raw: { domain_record_ref: "<domain>|<YYYY-MM-DD>", content: { html, tls: {...} } },
   raw_collected: { domain_record_at, content_at } }
 ```
+
+Domains collection (one per `(domain, date)`, keyed by `_id` = `"<domain>|<YYYY-MM-DD>"`):
+
+```js
+{ _id: "<domain>|<YYYY-MM-DD>", domain, collected_date, collected_at, record: {...} }
+```
+
+On read, `iter_labeled(require="domain_record")` `$lookup`-joins the referenced domain doc
+and re-exposes its `record` under `raw.domain_record`, so `build_train_artifacts` (and the
+stage contract) is unchanged by the normalization.
 
 TLS certificates are stored as DER bytes under `raw.content.tls`; the content feature
 extractor reconstructs x509 objects at feature time.

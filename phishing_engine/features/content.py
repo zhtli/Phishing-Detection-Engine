@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
 from phishing_engine.features.domainradar.transformations.html import HTMLTransformation
 from phishing_engine.features.domainradar.transformations.tls import TLSTransformation
+
+logger = logging.getLogger(__name__)
 
 
 def _load_tls_certs(tls_data: Optional[dict]) -> Optional[dict]:
@@ -25,7 +28,8 @@ def _load_tls_certs(tls_data: Optional[dict]) -> Optional[dict]:
             der = bytes.fromhex(der)
         try:
             certificates.append(x509.load_der_x509_certificate(der))
-        except Exception:
+        except Exception as exc:
+            logger.debug("failed to load DER certificate: %s", exc)
             continue
 
     return {

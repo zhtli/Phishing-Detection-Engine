@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import socket
 import ssl
 from typing import Optional
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_tls_data(url: str, timeout: float = 10.0) -> Optional[dict]:
@@ -34,7 +37,8 @@ def fetch_tls_data(url: str, timeout: float = 10.0) -> Optional[dict]:
                 cipher_info = tls_sock.cipher() or ("", "", 0)
                 cipher = cipher_info[0]
                 cert_der = tls_sock.getpeercert(binary_form=True)
-    except Exception:
+    except Exception as exc:
+        logger.debug("TLS handshake with %s:%s failed: %s", hostname, port, exc)
         return None
 
     certificates_der = [cert_der] if cert_der else []

@@ -9,6 +9,7 @@ Models are trained with string class labels ("phish"/"benign") so the resulting
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -16,6 +17,8 @@ import joblib
 import pandas as pd
 
 from phishing_engine.core.pipeline import BaseStage, PipelineContext
+
+logger = logging.getLogger(__name__)
 
 
 def _make_context(document: dict) -> PipelineContext:
@@ -48,6 +51,8 @@ def collect_training_data(stage: BaseStage, store, limit: int = 0) -> Tuple[List
     """
     rows: List[dict] = []
     labels: List[str] = []
+    failed = 0
+    empty = 0
     for document in store.iter_labeled(require=stage.requires_raw, limit=limit):
         label = document.get("label")
         if label not in ("phish", "benign"):
@@ -57,11 +62,32 @@ def collect_training_data(stage: BaseStage, store, limit: int = 0) -> Tuple[List
         try:
             features = stage.extract_features(context, artifacts)
         except Exception:
+            failed += 1
+            logger.warning(
+                "stage %r: feature extraction failed for document %r; skipping",
+                stage.stage_id,
+                document.get("_id"),
+                exc_info=True,
+            )
             continue
         if not features:
+            empty += 1
+            logger.debug(
+                "stage %r: document %r produced no features; skipping",
+                stage.stage_id,
+                document.get("_id"),
+            )
             continue
         rows.append(features)
         labels.append(label)
+    if failed or empty:
+        logger.info(
+            "stage %r: collected %d training rows (%d failed, %d empty skipped)",
+            stage.stage_id,
+            len(rows),
+            failed,
+            empty,
+        )
     return rows, labels
 
 

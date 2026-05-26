@@ -6,13 +6,14 @@ attaching a loaded ``ModelRunner`` when the configured model file exists.
 """
 from __future__ import annotations
 
-import sys
+import logging
 from pathlib import Path
 from typing import Dict, List, Type
 
 from phishing_engine.core.config import StageConfig
 from phishing_engine.core.model_runner import ModelRunner
 
+logger = logging.getLogger(__name__)
 
 _STAGE_REGISTRY: Dict[str, Type] = {}
 
@@ -33,7 +34,7 @@ def build_stages(configs: List[StageConfig]):
     """Instantiate stages from config, loading each stage's model if its file exists.
 
     A configured-but-missing model is not an error: the stage is built without a runner
-    and runs feature-only (a warning is printed to stderr).
+    and runs feature-only (a warning is logged).
     """
     stages = []
     for config in configs:
@@ -49,10 +50,11 @@ def build_stages(configs: List[StageConfig]):
             else:
                 # Model not trained yet: the stage still extracts features but produces
                 # no prediction, so the gate passes the URL on to the next stage.
-                print(
-                    f"[phishing_engine] stage '{config.id}': model not found at "
-                    f"{config.model_path}; running feature-only (train it with train_cli).",
-                    file=sys.stderr,
+                logger.warning(
+                    "stage '%s': model not found at %s; running feature-only "
+                    "(train it with train_cli).",
+                    config.id,
+                    config.model_path,
                 )
         stages.append(stage_cls(config, runner))
     return stages

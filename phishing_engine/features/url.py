@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Tuple
 
 from phishing_engine.features.lexical.domain_parser import domain_parser
 from phishing_engine.features.lexical.url_rules import url_rules
+
+logger = logging.getLogger(__name__)
 
 
 # Lexical-only feature set produced from the URL string alone (no network fetch).
@@ -78,6 +81,7 @@ class UrlLexicalFeatureExtractor:
 
         parsed = self._parser.parse_nonlabeled_samples([url])
         if not parsed:
+            logger.warning("unable to parse URL for lexical features: %r", url)
             return {}, {"error": "Unable to parse URL"}
 
         sample = parsed[0]

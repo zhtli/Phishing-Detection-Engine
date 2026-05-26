@@ -10,7 +10,7 @@
 | `base_transformation.py` | `Transformation` abstract base (the `features` + `transform` contract). |
 | `_helpers.py` | Shared math helpers: entropy, simhash, mean/stddev/min/max, md5 hashing, date helpers. |
 | `dns.py` | `DNSTransformation` — record presence/counts, TTLs, SOA, DNSSEC, SPF/DKIM/DMARC flags. |
-| `ip.py` | `IPTransformation` — per-domain IP counts and aggregate RTT/reputation features. |
+| `ip.py` | `IPTransformation` — per-domain IP counts, IPv4 ratio, address/ASN entropy. |
 | `geo.py` | `GeoTransformation` — geographic spread of the resolved IPs (country/lat/long stats). |
 | `lexical.py` | `LexicalTransformation` — domain-name lexical features incl. n-gram likelihoods (uses `../data/ngram_freq*.json`). |
 | `rdap_dn.py` | `RDAPDomainTransformation` — domain registration age/dates, registrar/entity features. |

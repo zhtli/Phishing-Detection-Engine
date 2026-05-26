@@ -19,7 +19,6 @@ dnspython
 httpx
 asyncwhois
 whodap
-icmplib
 geoip2
 joblib
 fastapi

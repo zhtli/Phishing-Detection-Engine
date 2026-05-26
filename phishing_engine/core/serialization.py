@@ -1,10 +1,13 @@
 """Convert pipeline result objects into JSON-safe dicts for the CLI and API."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Any, Dict
 
 from phishing_engine.core.pipeline import PipelineResult, StageResult
+
+logger = logging.getLogger(__name__)
 
 
 def sanitize_value(value: Any):
@@ -26,8 +29,8 @@ def sanitize_value(value: Any):
     if hasattr(value, "item"):
         try:
             return value.item()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("falling back to str() for value of type %s: %s", type(value).__name__, exc)
     return str(value)
 
 

@@ -5,7 +5,10 @@ key the same URL identically.
 """
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_url(url: str) -> str:
@@ -20,8 +23,8 @@ def normalize_url(url: str) -> str:
     host = parsed.hostname or ""
     try:
         host = host.encode("idna").decode("ascii")
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("IDNA encoding failed for host %r: %s", host, exc)
     normalized = parsed._replace(netloc=host).geturl()
     return normalized
 

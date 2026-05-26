@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 import csv
+import logging
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from typing import Iterable, List, Optional
 
 import requests
+import urllib3
+
+logger = logging.getLogger(__name__)
+
+# Fetched with verify=False on purpose; silence urllib3's InsecureRequestWarning.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 PHISHTANK_URL = "http://data.phishtank.com/data/online-valid.csv"
 PHISHTANK_HEADERS = {"User-Agent": "phishtank"}
@@ -25,6 +32,7 @@ def _parse_iso_datetime(value: str) -> Optional[datetime]:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed
     except ValueError:
+        logger.debug("could not parse ISO datetime %r", value)
         return None
 
 

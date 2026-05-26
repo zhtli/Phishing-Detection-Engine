@@ -12,6 +12,7 @@ import sys
 from typing import List, Optional
 
 from phishing_engine.core.config import load_config
+from phishing_engine.core.logging_setup import configure_logging
 from phishing_engine.core.pipeline import Pipeline
 from phishing_engine.core.registry import build_stages
 from phishing_engine.core.serialization import result_to_dict
@@ -33,6 +34,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--config", default="config/pipeline.json", help="Path to pipeline config JSON")
     args = parser.parse_args(argv)
 
+    configure_logging()
     pipeline = build_pipeline(args.config)
     result = pipeline.run(args.url)
     print(json.dumps(result_to_dict(result), indent=2))

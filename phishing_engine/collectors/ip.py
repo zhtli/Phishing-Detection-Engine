@@ -1,10 +1,12 @@
-"""IP RDAP/ASN/Geo/RTT collection helpers for the domain analyzer."""
+"""IP RDAP/ASN/Geo collection helpers for the domain analyzer."""
 
 import ipaddress
+import logging
 from datetime import datetime, UTC
 
 from geoip2.database import Reader as GeoIPReader
-from icmplib import async_ping, ICMPSocketError, DestinationUnreachable, TimeExceeded
+
+logger = logging.getLogger(__name__)
 
 
 def _now_utc() -> datetime:
@@ -16,7 +18,8 @@ def _lookup_geo(reader: GeoIPReader | None, ip_value: str) -> dict | None:
         return None
     try:
         response = reader.city(ip_value)
-    except Exception:
+    except Exception as exc:
+        logger.debug("GeoIP city lookup failed for %s: %s", ip_value, exc)
         return None
 
     subdivision = response.subdivisions.most_specific
@@ -40,7 +43,8 @@ def _lookup_asn(reader: GeoIPReader | None, ip_value: str) -> dict | None:
         return None
     try:
         response = reader.asn(ip_value)
-    except Exception:
+    except Exception as exc:
+        logger.debug("GeoIP ASN lookup failed for %s: %s", ip_value, exc)
         return None
 
     return {
@@ -49,24 +53,6 @@ def _lookup_asn(reader: GeoIPReader | None, ip_value: str) -> dict | None:
         "network_address": str(response.network.network_address),
         "prefix_len": response.network.prefixlen,
     }
-
-
-async def _measure_rtt(ip_value: str, count: int, timeout: float, interval: float, privileged: bool):
-    try:
-        result = await async_ping(
-            ip_value,
-            count=count,
-            timeout=timeout,
-            interval=interval,
-            privileged=privileged,
-        )
-        if result is None:
-            return 0.0, False
-        return float(result.avg_rtt or 0.0), bool(result.is_alive)
-    except (ICMPSocketError, DestinationUnreachable, TimeExceeded):
-        return 0.0, False
-    except Exception:
-        return 0.0, False
 
 
 def _normalize_rdap_ip(rdap_data: dict | None, ip_value: str) -> dict | None:
@@ -97,6 +83,7 @@ async def _fetch_ip_rdap(ip_value: str, ipv4_client, ipv6_client):
     try:
         ip_obj = ipaddress.ip_address(ip_value)
     except ValueError:
+        logger.debug("invalid IP address for RDAP lookup: %s", ip_value)
         return None
     try:
         if ip_obj.version == 4:
@@ -104,7 +91,8 @@ async def _fetch_ip_rdap(ip_value: str, ipv4_client, ipv6_client):
         else:
             rdap_response = await ipv6_client.aio_lookup(ip_value)
         return _normalize_rdap_ip(rdap_response.to_dict(), ip_value)
-    except Exception:
+    except Exception as exc:
+        logger.debug("IP RDAP lookup failed for %s: %s", ip_value, exc)
         return None
 
 
@@ -114,11 +102,6 @@ async def collect_ip_entries(
     ipv6_client,
     geo_reader,
     asn_reader,
-    rtt_enabled: bool,
-    rtt_privileged: bool,
-    rtt_count: int,
-    rtt_timeout: float,
-    rtt_interval: float,
 ):
     now = _now_utc()
     entries = []
@@ -128,19 +111,6 @@ async def collect_ip_entries(
         asn_data = _lookup_asn(asn_reader, ip_value)
         geo_data = _lookup_geo(geo_reader, ip_value)
 
-        average_rtt = 0.0
-        is_alive = False
-        icmp_time = None
-        if rtt_enabled:
-            average_rtt, is_alive = await _measure_rtt(
-                ip_value,
-                count=rtt_count,
-                timeout=rtt_timeout,
-                interval=rtt_interval,
-                privileged=rtt_privileged,
-            )
-            icmp_time = now
-
         return {
             "ip": ip_value,
             "from_record": source,
@@ -148,9 +118,6 @@ async def collect_ip_entries(
                 "rdap_evaluated_on": now,
                 "asn_evaluated_on": now,
                 "geo_evaluated_on": now,
-                "icmp_evaluated_on": icmp_time,
-                "is_alive": is_alive,
-                "average_rtt": average_rtt,
             },
             "rdap": rdap_data,
             "asn": asn_data,

@@ -19,11 +19,6 @@ class DomainStage(BaseStage):
         super().__init__(config, model_runner)
         options = config.options
         self.timeout = float(options.get("timeout", 5.0))
-        self.rtt_enabled = bool(options.get("rtt_enabled", False))
-        self.rtt_privileged = bool(options.get("rtt_privileged", False))
-        self.rtt_count = int(options.get("rtt_count", 3))
-        self.rtt_timeout = float(options.get("rtt_timeout", 1.0))
-        self.rtt_interval = float(options.get("rtt_interval", 0.2))
         self.geoip_city_db = options.get("geoip_city_db")
         self.geoip_asn_db = options.get("geoip_asn_db")
         self.feature_extractor = DomainFeatureExtractor(
@@ -38,11 +33,6 @@ class DomainStage(BaseStage):
             timeout=self.timeout,
             geoip_city_db=self.geoip_city_db,
             geoip_asn_db=self.geoip_asn_db,
-            rtt_enabled=self.rtt_enabled,
-            rtt_privileged=self.rtt_privileged,
-            rtt_count=self.rtt_count,
-            rtt_timeout=self.rtt_timeout,
-            rtt_interval=self.rtt_interval,
         )
         return {"record": record}
 

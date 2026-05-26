@@ -10,7 +10,7 @@ import datetime
 from cryptography import x509
 from cryptography.x509 import Certificate, ExtensionNotFound, ObjectIdentifier, Extension
 from cryptography.x509.oid import ExtensionOID, NameOID
-from pandas import DataFrame, Series
+from pandas import DataFrame, Series, concat
 from pandas.errors import OutOfBoundsDatetime
 
 from phishing_engine.features.common.base import Transformation
@@ -308,8 +308,12 @@ class TLSTransformation(Transformation):
 
     def transform(self, df: DataFrame) -> DataFrame:
         date = todays_midnight_timestamp()
-        df[TLSTransformation.all_columns] = df["tls"].apply(_make_tls_features, args=(date,))
-        return df
+        # `apply` returns a DataFrame whose columns are exactly `all_columns` (each row is a
+        # Series indexed by them). Attach them in a single `concat` instead of inserting
+        # ~110 columns one at a time into the already-populated frame — the latter fragments
+        # the block manager and triggers a pandas PerformanceWarning. Same columns/values.
+        tls_features = df["tls"].apply(_make_tls_features, args=(date,))
+        return concat([df, tls_features], axis=1)
 
     @property
     def features(self) -> dict[str, str]:

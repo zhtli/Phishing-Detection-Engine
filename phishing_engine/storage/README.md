@@ -29,12 +29,15 @@ when that URL was collected.
 { _id, domain, collected_date, collected_at, record: {...} }
 ```
 
-**Collector state** (`collector_state`, one per source, `_id` = source name): an
-incremental watermark. The phishtank collector stores its last successful run time here
-and, on the next run, filters the feed to entries verified since then so cron runs only
-ingest new updates.
+**Collector state** (`collector_state`): per-source progress so cron runs are
+incremental/resumable. The phishtank collector stores its last successful run time
+(`_id` = source name) and, on the next run, filters the feed to entries verified since
+then. The search collector stores the set of terms it has finished (`_id` =
+`"<source>:done_terms"`) and skips them on a re-run, so a crash or rate-limit block loses
+no progress.
 ```js
 { _id: "phishtank", last_run_at, updated_at }
+{ _id: "search:done_terms", terms: [...], updated_at }
 ```
 
 Certificates inside `raw.content.tls` are stored as DER bytes (`certificates_der`); the
@@ -44,7 +47,9 @@ content feature extractor reconstructs them at feature time.
 - **Writes (collectors):** `add_url` (URL + label + source), `store_domain_record`
   (writes the domains collection + the URL doc's `domain_record_ref`), `store_content`.
 - **State (collectors):** `get_last_run(source)` / `set_last_run(source, when)` read and
-  advance the per-source incremental watermark in `collector_state`.
+  advance the per-source incremental watermark; `get_done_terms(source)` /
+  `mark_term_done(source, term)` read and extend the search collector's done-terms set —
+  both in `collector_state`.
 - **Reads (training):** `iter_labeled(require=...)` yields labeled docs that have the
   required raw data. For `require="domain_record"` it joins the referenced domain doc and
   exposes its `record` under `raw.domain_record`, so readers are storage-agnostic.

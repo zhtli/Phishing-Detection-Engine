@@ -82,16 +82,48 @@ def cmd_tranco(args) -> int:
 
 
 def cmd_search(args) -> int:
-    """Search the given terms, store the benign URLs, and collect their raw data inline."""
-    from phishing_engine.collectors.sources.search import load_search_terms, search_urls_for_terms
+    """Search the given terms, store the benign URLs, and collect their raw data inline.
+
+    Resumable: each term's URLs are ingested as soon as that term is searched, and the
+    term is then recorded as done in Mongo. A re-run skips terms already done (unless
+    ``--full``), so a crash or DuckDuckGo rate-limit block costs no progress.
+    """
+    from phishing_engine.collectors.sources.search import iter_search_results, load_search_terms
 
     store = _store(args)
     try:
         terms = load_search_terms(args.terms_file)
         if args.limit_terms:
             terms = terms[: args.limit_terms]
-        urls = search_urls_for_terms(terms, max_results=args.max_results)
-        _ingest(store, urls, label="benign", source="search", limit=args.limit_urls, args=args)
+        if not args.full:
+            done = store.get_done_terms("search")
+            pending = [t for t in terms if t not in done]
+            if len(pending) < len(terms):
+                logger.info("search: resuming, %d/%d terms already done", len(terms) - len(pending), len(terms))
+            terms = pending
+
+        stored = domain_ok = content_ok = 0
+        done_terms = 0
+        bar = tqdm(total=len(terms), desc="search", unit="term")
+        try:
+            for term, urls in iter_search_results(terms, max_results=args.max_results):
+                for url in urls:
+                    if not url:
+                        continue
+                    normalized = store.add_url(url, label="benign", source="search")
+                    d, c = _collect_for_url(store, url, normalized, args)
+                    domain_ok += d
+                    content_ok += c
+                    stored += 1
+                    bar.set_postfix(urls=stored, domain=domain_ok, content=content_ok)
+                store.mark_term_done("search", term)
+                done_terms += 1
+                bar.update(1)
+                if args.limit_urls and stored >= args.limit_urls:
+                    break
+        finally:
+            bar.close()
+        print(f"search: {done_terms} terms, stored {stored} URLs (domain {domain_ok}, content {content_ok})")
     finally:
         store.close()
     return 0
@@ -213,6 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit-terms", type=int, default=None, help="Limit number of search terms")
     p.add_argument("--max-results", type=int, default=10, help="Max results per term")
     p.add_argument("--limit-urls", type=int, default=None, help="Max URLs to collect")
+    p.add_argument("--full", action="store_true", help="Re-search all terms, ignoring the saved done-terms set")
     _add_collect_args(p)
     p.set_defaults(func=cmd_search)
 

@@ -91,6 +91,23 @@ class MongoStore:
             upsert=True,
         )
 
+    def get_done_terms(self, source: str) -> set:
+        """Return the set of search terms already completed for a source.
+
+        Lets ``cli.collect search`` resume after a crash or rate-limit block: terms
+        recorded by ``mark_term_done`` are skipped on a re-run.
+        """
+        doc = self.state.find_one({"_id": f"{source}:done_terms"})
+        return set(doc.get("terms", [])) if doc else set()
+
+    def mark_term_done(self, source: str, term: str) -> None:
+        """Record that ``term`` has been fully searched and ingested for a source."""
+        self.state.update_one(
+            {"_id": f"{source}:done_terms"},
+            {"$addToSet": {"terms": term}, "$set": {"updated_at": self._now()}},
+            upsert=True,
+        )
+
     # ------------------------------------------------------------------ writes
 
     def add_url(self, url: str, label: Optional[str] = None, source: Optional[str] = None) -> str:

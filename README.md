@@ -102,8 +102,8 @@ pip install -r requirements.txt
 # data (raw.domain_record / raw.content) in the same run, processing every
 # stored URL still missing that data.
 python -m phishing_engine.cli.collect phishtank --limit 2000
-python -m phishing_engine.cli.collect tranco --list-path tranco.csv --sample-size 500
-python -m phishing_engine.cli.collect search --terms-file terms.txt --max-results 10
+python -m phishing_engine.cli.collect tranco --list-path top-1m.csv --sample-size 2000
+python -m phishing_engine.cli.collect search --terms-file g-trends.csv --max-results 10
 ```
 
 ### Incremental PhishTank collection
@@ -136,6 +136,35 @@ Notes:
   any URLs re-seen are deduped by the upsert on the URL `_id`.
 - Explicit `--since`/`--days` still advance the watermark afterward — only `--full` skips
   reading it.
+
+### Resumable search collection
+
+The `search` collector is **resumable per term**. It searches one term, ingests that
+term's URLs (with their domain record + content), then records the term as done in Mongo
+(`collector_state` collection, `_id: "search:done_terms"`). A re-run skips terms already
+done, so a crash or a DuckDuckGo rate-limit block costs no progress — DuckDuckGo throttles
+scraped traffic aggressively, so long runs commonly get blocked partway through.
+
+```bash
+# First run — searches every term, recording each as done as it completes:
+python -m phishing_engine.cli.collect search --terms-file g-trends.csv --max-results 10
+
+# Re-run after a crash/rate-limit block — resumes, skipping terms already done:
+python -m phishing_engine.cli.collect search --terms-file g-trends.csv --max-results 10
+
+# Re-search all terms, ignoring the saved done-terms set (e.g. to refresh results):
+python -m phishing_engine.cli.collect search --terms-file g-trends.csv --full
+```
+
+Notes:
+- A term is recorded as done only after its URLs are ingested, so an interrupted term is
+  retried on the next run (re-ingested URLs are deduped by the upsert on the URL `_id`).
+- A single term's search failure (`DDGSException`) is logged and skipped, not fatal. After
+  **5 consecutive** failures the run stops early — that streak is the rate-limit signature,
+  and the remaining terms resume on a later run once the block clears.
+- `--full` bypasses the done-terms set for that run but does **not** clear it; new terms
+  added to the file are still picked up by a normal (non-`--full`) run.
+- The done-terms set is global per `source="search"`, shared across different terms files.
 
 Example crontab:
 

@@ -14,3 +14,8 @@ subcommand runs **incrementally by default**: it saves each successful run's sta
 a watermark in Mongo and, on the next run, only pulls feed entries verified since then.
 Use `--days`/`--since` to override the watermark for a run, or `--full` to ignore it and
 pull the whole feed. See the root README's "Incremental PhishTank collection" section.
+
+The `search` subcommand is **resumable per term**: each term is recorded as done in Mongo
+once its URLs are ingested, so a re-run skips completed terms (a crash or DuckDuckGo
+rate-limit block loses no progress). Use `--full` to re-search every term. See the root
+README's "Resumable search collection" section.

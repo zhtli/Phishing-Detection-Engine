@@ -8,8 +8,8 @@ __authors__ = [
 from pandas import DataFrame
 import pandas as pd
 
-from .base_transformation import Transformation
-from ._helpers import get_normalized_entropy, simhash, todays_midnight_timestamp
+from phishing_engine.features.common.base import Transformation
+from phishing_engine.features.common.helpers import get_normalized_entropy, simhash, todays_midnight_timestamp
 
 
 def _get_rdap_domain_features(rdap_entities):

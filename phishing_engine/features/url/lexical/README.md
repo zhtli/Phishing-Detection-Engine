@@ -1,4 +1,4 @@
-# `features/lexical/` — vendored URL lexical analyzer
+# `features/url/lexical/` — URL lexical analyzer (third-party origin)
 
 > **Vendored code.** This is a third-party URL lexical-analysis library, copied into the
 > engine and adjusted only so it is import-clean and resolves its data files relative to

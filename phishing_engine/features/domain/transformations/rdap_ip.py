@@ -7,8 +7,8 @@ __authors__ = [
 
 from pandas import DataFrame
 
-from .base_transformation import Transformation
-from ._helpers import get_normalized_entropy
+from phishing_engine.features.common.base import Transformation
+from phishing_engine.features.common.helpers import get_normalized_entropy
 
 
 def get_rdap_ip_features(ip_data):

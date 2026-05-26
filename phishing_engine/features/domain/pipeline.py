@@ -1,7 +1,8 @@
 """extractor.py: The feature extraction process implementation.
 Provides the extract_features function that takes raw data, passes it through the configured transformations and returns
- a DataFrame of feature vectors. The list of transformations is initialized from the configuration."""
-__author__ = "Ondřej Ondryáš <xondry02@vut.cz>"
+ a DataFrame of feature vectors. The list of transformations is initialized from the configuration.
+
+Originally authored by Ondřej Ondryáš <xondry02@vut.cz> as part of DomainRadar."""
 
 from collections import OrderedDict
 from typing import Iterable
@@ -9,8 +10,8 @@ from typing import Iterable
 import pandas as pd
 from pandas import DataFrame
 
-from .compat import CompatibilityTransformation
-from .transformations.base_transformation import Transformation
+from phishing_engine.features.common.base import Transformation
+from .flatten import DomainRecordFlattener
 from .transformations.dns import DNSTransformation
 from .transformations.drop_columns import DropColumnsTransformation
 from .transformations.geo import GeoTransformation
@@ -33,15 +34,15 @@ _all_transformations = OrderedDict([
  The keys are used in the configuration to enable or disable specific transformations."""
 _enabled_transformations: list[Transformation] = []
 """A list of all enabled and initialized transformer objects."""
-_compat_transformation = CompatibilityTransformation()
-"""A special transformation that converts the raw data into a format compatible with the other transformations."""
+_record_flattener = DomainRecordFlattener()
+"""Reshapes each raw domain record into the flat column layout the transformations consume."""
 _added_columns_names: list = []
 """A list of the names of all columns added by the transformations."""
 _added_columns_with_types: dict = {}
 """A dictionary of the names of all columns added by the transformations and their target DataFrame types."""
 _all_columns_with_types: dict = {}
-"""A dictionary of all output columns and their target DataFrame types, including the columns added by the
-compatibility transformation."""
+"""A dictionary of all output columns and their target DataFrame types, including the flattened columns
+produced from the raw record."""
 
 
 def init_transformations(config: dict):
@@ -81,7 +82,7 @@ def init_transformations(config: dict):
 
     _added_columns_names = target_features.keys()
     _added_columns_with_types = {k: v for k, v in target_features.items() if not k.startswith("tmp_")}
-    _all_columns_with_types = _added_columns_with_types | CompatibilityTransformation.datatypes
+    _all_columns_with_types = _added_columns_with_types | DomainRecordFlattener.datatypes
 
 
 def extract_features(raw_data: Iterable[dict]) -> tuple[DataFrame | None, dict[str, Exception]]:
@@ -103,8 +104,8 @@ def extract_features(raw_data: Iterable[dict]) -> tuple[DataFrame | None, dict[s
         tuple[DataFrame | None, dict[str, Exception]]: A tuple where the first element is a DataFrame of extracted
         features and the second element is a dictionary of exceptions.
     """
-    # Transform the raw data into a format compatible with the transformations
-    raw_data_compatible = []
+    # Flatten each raw record into the column layout the transformations expect
+    flattened_records = []
     errors = {}
     for raw_data_entry in raw_data:
         if raw_data_entry is None:
@@ -118,15 +119,15 @@ def extract_features(raw_data: Iterable[dict]) -> tuple[DataFrame | None, dict[s
             continue
 
         try:
-            # Run the compatibility transformation
-            raw_data_compatible.append(_compat_transformation.transform(raw_data_entry))
+            # Reshape the nested record into flat columns
+            flattened_records.append(_record_flattener.flatten(raw_data_entry))
         except Exception as e:
             errors[raw_data_entry.get("domain_name", "?")] = e
     # If all entries were filtered out, return None
-    if len(raw_data_compatible) == 0:
+    if len(flattened_records) == 0:
         return None, errors
     # Create a DataFrame where each row is one entry from the raw_data iterable
-    data_frame = DataFrame(raw_data_compatible, copy=False)
+    data_frame = DataFrame(flattened_records, copy=False)
     # Create new columns
     new_cols = DataFrame(columns=_added_columns_names)
     data_frame = pd.concat([data_frame, new_cols], axis=1)

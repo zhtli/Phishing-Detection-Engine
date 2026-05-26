@@ -4,7 +4,7 @@ __author__ = "Ondřej Ondryáš <xondry02@vut.cz>"
 
 from pandas import DataFrame
 
-from .base_transformation import Transformation
+from phishing_engine.features.common.base import Transformation
 
 _to_drop = [
     "dns_zone",

@@ -1,5 +1,6 @@
-"""Shared helper for the vendored DomainRadar extractor."""
-__author__ = "Ondřej Ondryáš <xondry02@vut.cz>"
+"""Shared helper for the domain feature extractor.
+
+Originally authored by Ondřej Ondryáš <xondry02@vut.cz> as part of DomainRadar."""
 
 from typing import Any
 

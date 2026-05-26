@@ -60,10 +60,11 @@ phishing_engine/
     urls.py               # URL normalization
     serialization.py      # result -> JSON-safe dict
   stages/                 # url / domain / content stages (BaseStage lives in core.pipeline)
-  features/
-    url.py domain.py content.py   # adapters used by the stages
-    lexical/              # vendored URL lexical analyzer + input data + gib model
-    domainradar/          # vendored DomainRadar extractor + transformations + ngram data
+  features/               # feature extraction, organized by stage
+    url/                  # url stage: extractor.py + lexical/ analyzer (+ input data + gib model)
+    domain/               # domain stage: extractor.py + pipeline + flatten + transformations/ + ngram data/
+    content/              # content stage: extractor.py + transformations/{html,tls}
+    common/               # shared Transformation base + math helpers
   collectors/
     sources/              # URL-list sources: phishtank.py tranco.py search.py
     dns.py ip.py rdap.py domain_record.py      # raw domain record collection

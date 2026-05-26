@@ -7,8 +7,8 @@ __authors__ = [
 
 from pandas import DataFrame
 
-from .base_transformation import Transformation
-from ._helpers import get_stddev, get_mean, get_min, get_max
+from phishing_engine.features.common.base import Transformation
+from phishing_engine.features.common.helpers import get_stddev, get_mean, get_min, get_max
 
 _continents = {
     'North America': [33, 187, 111, 81],

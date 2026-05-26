@@ -1,13 +1,16 @@
-"""compat.py: A compatibility transformation that converts the raw data collected by the DomainRadar Collector
-into a format that can be used by the "legacy" transformations."""
-__author__ = "Ondřej Ondryáš <xondry02@vut.cz>"
+"""flatten.py: Reshapes a raw domain record (the nested shape produced by
+``collectors/domain_record.py``) into the flat, one-column-per-field layout that the
+DataFrame transformations consume. This is the first step of the extraction pipeline,
+run per record before the DataFrame is built.
+
+Originally authored by Ondřej Ondryáš <xondry02@vut.cz> as part of DomainRadar."""
 
 import ipaddress
 from datetime import datetime, UTC
 
 from .util import get_safe
 
-class CompatibilityTransformation:
+class DomainRecordFlattener:
     datatypes = {
         "domain_name": "str",
         "dns_email_extras": "object",
@@ -36,7 +39,7 @@ class CompatibilityTransformation:
     }
 
 
-    def transform(self, data: dict) -> dict:
+    def flatten(self, data: dict) -> dict:
         dns_data = data.get("dns") or {}
         rdap_data = data.get("rdap") or {}
 

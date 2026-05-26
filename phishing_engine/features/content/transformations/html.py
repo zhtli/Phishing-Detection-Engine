@@ -6,7 +6,7 @@ from typing import Iterable
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 from pandas import DataFrame, isnull
 
-from .base_transformation import Transformation
+from phishing_engine.features.common.base import Transformation
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 

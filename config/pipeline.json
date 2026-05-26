@@ -76,7 +76,7 @@
           "negative_label": "benign"
         },
         "options": {
-          "data_dir": "phishing_engine/features/domainradar/data",
+          "data_dir": "phishing_engine/features/domain/data",
           "geoip_city_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-City.mmdb",
           "geoip_asn_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-ASN.mmdb"
         }

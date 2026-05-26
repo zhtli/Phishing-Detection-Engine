@@ -6,8 +6,8 @@ from typing import Optional, List, Dict
 import numpy as np
 from pandas import DataFrame, Series
 
-from .base_transformation import Transformation
-from ._helpers import get_normalized_entropy, DNS_TYPES
+from phishing_engine.features.common.base import Transformation
+from phishing_engine.features.common.helpers import get_normalized_entropy, DNS_TYPES
 from .lexical import count_subdomains
 
 

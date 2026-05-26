@@ -8,7 +8,7 @@ pipeline**, a **training pipeline**, and a set of **collectors**. The repository
 |-----------|---------------|
 | [`core/`](core/README.md) | Framework plumbing: config, the prediction pipeline + gating, the model runner, training, the stage registry, URL/serialization helpers. |
 | [`stages/`](stages/README.md) | The three concrete detection stages: `url`, `domain`, `content`. |
-| [`features/`](features/README.md) | Feature extractors. Thin adapters (`url.py`, `domain.py`, `content.py`) over two vendored libraries: [`lexical/`](features/lexical/README.md) and [`domainradar/`](features/domainradar/README.md). |
+| [`features/`](features/README.md) | Feature extractors, organized by stage: [`url/`](features/url/README.md), [`domain/`](features/domain/README.md), [`content/`](features/content/README.md), plus shared [`common/`](features/common/README.md). |
 | [`collectors/`](collectors/README.md) | Data collection. [`sources/`](collectors/sources/README.md) pull URL lists; `dns/ip/rdap/domain_record` build raw domain records; `web_fetch/tls/content` fetch page content. |
 | [`storage/`](storage/README.md) | `MongoStore` — the **only** component that writes to MongoDB. |
 | [`cli/`](cli/README.md) | The three command-line tools: `predict`, `train`, `collect`. |

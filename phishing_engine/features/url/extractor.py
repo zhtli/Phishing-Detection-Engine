@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Tuple
 
-from phishing_engine.features.lexical.domain_parser import domain_parser
-from phishing_engine.features.lexical.url_rules import url_rules
+from .lexical.domain_parser import domain_parser
+from .lexical.url_rules import url_rules
 
 logger = logging.getLogger(__name__)
 

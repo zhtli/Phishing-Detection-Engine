@@ -13,8 +13,8 @@ import re
 import tldextract
 from pandas import DataFrame
 
-from .base_transformation import Transformation
-from ._helpers import get_normalized_entropy, get_stddev, simhash
+from phishing_engine.features.common.base import Transformation
+from phishing_engine.features.common.helpers import get_normalized_entropy, get_stddev, simhash
 
 phishing_keywords = [
     "account", "action", "alert", "app", "auth", "bank", "billing", "center", "chat", "device", "fax", "event",

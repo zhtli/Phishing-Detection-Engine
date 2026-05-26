@@ -63,10 +63,14 @@ feature parity:
   from the `raw.*` sub-documents the collectors stored in Mongo, then the identical
   `extract_features` runs on them.
 
-The adapters in `features/{url,domain,content}.py` are the single seam between the engine
-and two **vendored** libraries: `features/lexical/` (URL lexical analysis) and
-`features/domainradar/` (DNS/IP/RDAP/TLS/HTML transformations). Touch the adapters, not the
-vendored code, when wiring features.
+Feature code is organized **by stage** under `features/`: `url/`, `domain/`, `content/` are
+self-contained packages whose `extractor.py` exposes the adapter class the matching stage
+imports (`features.{url,domain,content}` re-export it). `features/common/` holds the shared
+`Transformation` base + math helpers used by the domain and content transformations; the
+URL lexical analyzer is bundled at `features/url/lexical/`. Everything here is project-owned
+and may be edited directly; the `domain/` transformations were derived from DomainRadar and
+`url/lexical/` is third-party in origin, so preserve the feature math (it's what the trained
+models expect) unless you intend to retrain.
 
 ### Stages and gating
 
@@ -174,7 +178,7 @@ phishing_engine/
   cli/                  predict.py, train.py, collect.py
   core/                 config, pipeline+gating, model_runner, training, registry, urls, serialization
   stages/               url / domain / content (BaseStage lives in core/pipeline.py)
-  features/             url.py domain.py content.py adapters; vendored lexical/ and domainradar/
+  features/             by-stage packages: url/ domain/ content/ (each w/ extractor.py adapter) + common/
   collectors/           sources/ (phishtank, tranco, search); dns/ip/rdap/domain_record; web_fetch/tls/content
   storage/mongo.py      MongoStore — the ONLY Mongo writer
   models/               domain_model.joblib (shipped); url/content trained locally

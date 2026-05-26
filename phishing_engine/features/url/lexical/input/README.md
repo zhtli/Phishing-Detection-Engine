@@ -1,4 +1,4 @@
-# `features/lexical/input/` — word lists for the URL analyzer
+# `features/url/lexical/input/` — word lists for the URL analyzer
 
 Static text data loaded by the vendored lexical analyzer (`../url_rules.py`,
 `../word_with_nlp.py`, `../word_splitter_file.py`). Resolved relative to the package.

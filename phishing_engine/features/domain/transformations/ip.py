@@ -9,7 +9,7 @@ import ipaddress
 import numpy as np
 from pandas import DataFrame
 
-from .base_transformation import Transformation
+from phishing_engine.features.common.base import Transformation
 
 
 def make_entropy(data):

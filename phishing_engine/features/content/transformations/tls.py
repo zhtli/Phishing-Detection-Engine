@@ -13,8 +13,8 @@ from cryptography.x509.oid import ExtensionOID, NameOID
 from pandas import DataFrame, Series
 from pandas.errors import OutOfBoundsDatetime
 
-from .base_transformation import Transformation
-from ._helpers import todays_midnight_timestamp, hash_md5
+from phishing_engine.features.common.base import Transformation
+from phishing_engine.features.common.helpers import todays_midnight_timestamp, hash_md5
 
 _tls_version_ids = {
     "TLSv1": 0,

@@ -5,8 +5,8 @@ from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
-from phishing_engine.features.domainradar.transformations.html import HTMLTransformation
-from phishing_engine.features.domainradar.transformations.tls import TLSTransformation
+from .transformations.html import HTMLTransformation
+from .transformations.tls import TLSTransformation
 
 logger = logging.getLogger(__name__)
 

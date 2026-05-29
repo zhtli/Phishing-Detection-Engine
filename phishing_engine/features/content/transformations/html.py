@@ -53,75 +53,154 @@ class HTMLTransformation(Transformation):
     def get_tags_f(self, soup: BeautifulSoup) -> list:
         if not soup:
             return [0] * 53
-        tags = {tag.name: soup.find_all(tag.name) for tag in soup.find_all()}
 
-        def get_elements(tag=None, attr=None):
-            return soup.find_all(tag, {attr: True}) if attr else soup.find_all(tag)
+        name_counts = Counter()
+        script_src = script_async = script_type = 0
+        anchors = []
+        hidden_inputs = 0
+        hidden_elements = 0
+        input_password = 0
+        iframe_src = iframe_src_http = 0
+        img_src = 0
+        link_href = link_href_http = link_href_css = link_type = 0
+        link_type_app = link_shortlink = 0
+        icon_count = css_internal = css_external = 0
+        icon_external = False
+        any_href = 0
+        form_actions = form_http = form_php = form_hash = form_js = 0
+        malicious_form = False
+
+        for el in soup.find_all(True):
+            name = el.name
+            name_counts[name] += 1
+            style = el.get('style', '')
+
+            if (el.has_attr('hidden') or
+                    'display: none' in style or
+                    'visibility: hidden' in style or
+                    'opacity: 0' in style or
+                    'position: absolute' in style):
+                hidden_elements += 1
+
+            if el.has_attr('href'):
+                any_href += 1
+
+            if name == 'script':
+                if el.has_attr('src'):
+                    script_src += 1
+                if el.has_attr('async'):
+                    script_async += 1
+                if el.has_attr('type'):
+                    script_type += 1
+            elif name == 'a':
+                anchors.append(el)
+            elif name == 'input':
+                if el.get('type') == 'password':
+                    input_password += 1
+                if (el.get('type') == 'hidden' or
+                        'display: none' in style or
+                        'visibility: hidden' in style or
+                        'opacity: 0' in style or
+                        'position: absolute' in style):
+                    hidden_inputs += 1
+            elif name == 'iframe':
+                if el.has_attr('src'):
+                    iframe_src += 1
+                    if "http" in el.get('src', ''):
+                        iframe_src_http += 1
+            elif name == 'img':
+                if el.has_attr('src'):
+                    img_src += 1
+            elif name == 'link':
+                href = el.get('href', '')
+                if el.has_attr('href'):
+                    link_href += 1
+                    if "http" in href:
+                        link_href_http += 1
+                    if ".css" in href:
+                        link_href_css += 1
+                if el.has_attr('type'):
+                    link_type += 1
+                    if el.get('type') == 'application/rss+xml':
+                        link_type_app += 1
+                # rel is a multi-valued attribute: bs4 returns it as a list.
+                rel = el.get('rel')
+                rel_val = ' '.join(rel) if isinstance(rel, list) else (rel or '')
+                if rel_val == 'shortlink':
+                    link_shortlink += 1
+                elif rel_val == 'shortcut icon':
+                    icon_count += 1
+                    if "http" in href:
+                        icon_external = True
+                elif rel_val == 'stylesheet':
+                    if "http" in href:
+                        css_external += 1
+                    else:
+                        css_internal += 1
+            elif name == 'form':
+                if el.has_attr('action'):
+                    form_actions += 1
+                    action = el.get('action', '')
+                    if "http" in action:
+                        form_http += 1
+                    if ".php" in action:
+                        form_php += 1
+                    if "#" in action:
+                        form_hash += 1
+                    if "javascript:void()" in action or "javascript:void(0)" in action:
+                        form_js += 1
+                    if ("http" in action or ".php" in action or
+                            "#" in action or "javascript:void" in action):
+                        malicious_form = True
 
         try:
-            anchors = tags.get('a', [])
             hrefs = [a.get('href') for a in anchors if a.get('href')]
             hrefs_http = [href for href in hrefs if "http" in href]
             hrefs_internal = [href for href in hrefs if "http" not in href]
-        except Exception as e:
-            # TODO
+            anchor_http = sum(1 for a in anchors if "http" in a.get('href', ''))
+            anchor_com = sum(1 for a in anchors if ".com" in a.get('href', ''))
+            anchor_hash = sum(1 for a in anchors if a.get('href') == '#')
+            anchor_content = sum(1 for a in anchors if a.get('href') == '#content')
+            anchor_void = sum(1 for a in anchors if a.get('href') == 'javascript:void(0)')
+        except Exception:
             anchors, hrefs, hrefs_http, hrefs_internal = [], [], [], []
+            anchor_http = anchor_com = 0
+            anchor_hash = anchor_content = anchor_void = 0
 
         no_hrefs_flag = len(hrefs) == 0
         external_hrefs_flag = len(hrefs_http) / len(hrefs) > 0.5 if hrefs else 0
         internal_hrefs_flag = len(hrefs_internal) / len(hrefs) <= 0.5 if hrefs else 0
+        most_common = Counter(hrefs).most_common(1)[0][1] / len(hrefs) if hrefs else 0
 
-        form_actions = get_elements('form', 'action')
-        malicious_form = any("http" in form.get('action', '') or
-                             ".php" in form.get('action', '') or
-                             "#" in form.get('action', '') or
-                             "javascript:void" in form.get('action', '')
-                             for form in form_actions)
-        hidden_elements = [element for element in soup.find_all(True)
-                           if (element.has_attr('hidden') or
-                               'display: none' in element.get('style', '') or
-                               'visibility: hidden' in element.get('style', '') or
-                               'opacity: 0' in element.get('style', '') or
-                               'position: absolute' in element.get('style', ''))]
-
-        hidden_inputs = [input for input in soup.find_all('input')
-                         if input.get('type') == 'hidden' or
-                         'display: none' in input.get('style', '') or
-                         'visibility: hidden' in input.get('style', '') or
-                         'opacity: 0' in input.get('style', '') or
-                         'position: absolute' in input.get('style', '')]
-
-        return [len(tags), len(tags.get('p', [])), len(tags.get('div', [])), len(tags.get('title', [])),
-                len(get_elements('script', 'src')),
-                len(get_elements('link')), len(tags.get('script', [])), len(get_elements('script', 'async')),
-                len(get_elements('script', 'type')),
-                len(anchors), len(get_elements('a', 'href="#"')),
-                len([a for a in anchors if "http" in a.get('href', '')]),
-                len([a for a in anchors if ".com" in a.get('href', '')]),
-                len(tags.get('input', [])), len(get_elements('input', 'type="password"')), len(hidden_elements),
-                len(hidden_inputs), len(tags.get('object', [])), len(tags.get('embed', [])),
-                len(tags.get('frame', [])), len(tags.get('iframe', [])), len(get_elements('iframe', 'src')),
-                len([iframe for iframe in get_elements('iframe', 'src') if "http" in iframe.get('src', '')]),
-                len(tags.get('center', [])), len(tags.get('img', [])), len(get_elements('img', 'src')),
-                len(tags.get('meta', [])), len(get_elements('link', 'href')),
-                len([link for link in get_elements('link', 'href') if "http" in link.get('href', '')]),
-                len([link for link in get_elements('link', 'href') if ".css" in link.get('href', '')]),
-                len(get_elements('link', 'type')), len(get_elements('link', 'type="application/rss+xml"')),
-                len(get_elements('link', 'rel="shortlink"')), len(soup.find_all(href=True)),
-                len(form_actions), len([form for form in form_actions if "http" in form.get('action', '')]),
-                len(tags.get('strong', [])), int(no_hrefs_flag), int(internal_hrefs_flag), len(hrefs_internal),
+        return [len(name_counts), name_counts.get('p', 0), name_counts.get('div', 0), name_counts.get('title', 0),
+                script_src,
+                name_counts.get('link', 0), name_counts.get('script', 0), script_async,
+                script_type,
+                len(anchors), anchor_hash,
+                anchor_http,
+                anchor_com,
+                name_counts.get('input', 0), input_password, hidden_elements,
+                hidden_inputs, name_counts.get('object', 0), name_counts.get('embed', 0),
+                name_counts.get('frame', 0), name_counts.get('iframe', 0), iframe_src,
+                iframe_src_http,
+                name_counts.get('center', 0), name_counts.get('img', 0), img_src,
+                name_counts.get('meta', 0), link_href,
+                link_href_http,
+                link_href_css,
+                link_type, link_type_app,
+                link_shortlink, any_href,
+                form_actions, form_http,
+                name_counts.get('strong', 0), int(no_hrefs_flag), int(internal_hrefs_flag), len(hrefs_internal),
                 int(external_hrefs_flag),
-                len(hrefs_http), len(get_elements('link', 'rel="shortcut icon"')), int(bool(
-                [icon for icon in get_elements('link', 'rel="shortcut icon"') if "http" in icon.get('href', '')])),
-                len([form for form in form_actions if ".php" in form.get('action', '')]),
-                len([form for form in form_actions if "#" in form.get('action', '')]),
-                len([form for form in form_actions if
-                     "javascript:void()" in form.get('action', '') or "javascript:void(0)" in form.get('action', '')]),
+                len(hrefs_http), icon_count, int(icon_external),
+                form_php,
+                form_hash,
+                form_js,
                 int(malicious_form),
-                Counter(hrefs).most_common(1)[0][1] / len(hrefs) if hrefs else 0,
-                len([css for css in get_elements('link', 'rel="stylesheet"') if "http" not in css.get('href', '')]),
-                len([css for css in get_elements('link', 'rel="stylesheet"') if "http" in css.get('href', '')]),
-                len(get_elements('a', 'href="#content"')), len(get_elements('a', 'href="javascript:void(0)"'))
+                most_common,
+                css_internal,
+                css_external,
+                anchor_content, anchor_void
                 ]
 
     @staticmethod

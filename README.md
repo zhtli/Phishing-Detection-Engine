@@ -28,13 +28,19 @@ responsibilities:
 - The **training pipeline** reads labeled raw documents from MongoDB, extracts features
   with the same extractors used at prediction time, trains a classifier per stage, and
   writes the model to disk. It does not write to MongoDB.
-- The **prediction pipeline** scores a single URL through ordered, gated stages. Each
-  stage collects whatever it needs in-memory; the pipeline never writes to MongoDB.
+- The **prediction pipeline** scores a single URL through a staged cascade, stopping at
+  the first stage confident enough to flag it. Each stage collects whatever it needs
+  in-memory; the pipeline never writes to MongoDB.
 
 ### Stages (prediction)
 
-Stages run in order with early-exit gating: a stage short-circuits the pipeline when its
-score crosses the configured `phish_threshold` / `benign_threshold`.
+The enabled stages run in order as a single-threshold cascade. A stage whose phishing
+probability is `>= decision.threshold` flags the URL `phish` and ends the run (the
+remaining stages are skipped); a probability below the threshold escalates the URL to the
+next stage. If no stage exits early, the stages' probabilities are aggregated — `max`
+(default) or `median` per `decision.fallback_aggregation` — and the verdict is `phish` if
+the aggregate is `>= 0.5` else `benign` (this fallback only fires `phish` when
+`threshold > 0.5`), or `unknown` if no stage scored.
 
 | Stage | Input | Fetches network? |
 |-------|-------|------------------|
@@ -53,7 +59,7 @@ phishing_engine/
     collect.py            # collectors CLI (cron-friendly subcommands)
   core/                   # framework plumbing
     config.py             # config models + loader
-    pipeline.py           # prediction pipeline + gating (no Mongo writes)
+    pipeline.py           # prediction pipeline + decision cascade (no Mongo writes)
     training.py           # training pipeline
     model_runner.py       # ModelRunner (load model, align features, predict)
     registry.py           # stage registry + build_stages
@@ -79,13 +85,13 @@ phishing_engine/
 Driven by `config/pipeline.json` (schema in `phishing_engine/core/config.py`):
 
 - `mongo`: `uri`, `database`, `collection`.
-- `stages`: ordered list. Each has `id`, `enabled`, `model_path`, optional
-  `feature_columns`, `label_map`, `gate` (`phish_threshold`, `benign_threshold`,
-  `positive_label`, `negative_label`), and stage-specific `options`.
+- `decision`: pipeline-wide policy — `threshold` (0–1), `positive_label`,
+  `negative_label`.
+- `stages`: ordered list (the cascade order). Each has `id`, `enabled`, `model_path`,
+  optional `feature_columns`, `label_map`, and stage-specific `options`.
 
-A stage whose `model_path` does not exist yet runs **feature-only** (no prediction, the
-gate passes the URL to the next stage), so the engine is usable before every model is
-trained.
+A stage whose `model_path` does not exist yet runs **feature-only** (no prediction, so the
+cascade escalates past it), so the engine is usable before every model is trained.
 
 ## Install
 
@@ -188,9 +194,6 @@ prediction time. The shipped `domain_model.joblib` is the pre-existing XGBoost m
 (uses `label_map {"1":"phish","0":"benign"}`). The `url` and `content` models must be
 trained locally before those stages will predict.
 
-> Note: the `url` stage is lexical-only by design, so the legacy `url_analyzer` model
-> (which relied on fetched cert/redirect features) is not reused — retrain it with
-> `cli.train`.
 
 ## Prediction
 

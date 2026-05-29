@@ -12,8 +12,9 @@ responsibilities:
   MongoDB (raw URL+label, raw domain records, raw page content).
 - **Training pipeline** — reads labeled raw documents from MongoDB, extracts features, fits
   a classifier per stage, writes the model to disk. Never writes to MongoDB.
-- **Prediction pipeline** — scores a single URL through ordered, gated stages. Collects
-  what each stage needs in-memory. Never writes to MongoDB.
+- **Prediction pipeline** — scores a single URL through every stage, fusing their
+  probabilities into one thresholded verdict. Collects what each stage needs in-memory.
+  Never writes to MongoDB.
 
 ## Commands
 
@@ -72,11 +73,24 @@ and may be edited directly; the `domain/` transformations were derived from Doma
 `url/lexical/` is third-party in origin, so preserve the feature math (it's what the trained
 models expect) unless you intend to retrain.
 
-### Stages and gating
+### Stages and the decision cascade
 
-Stages run in config order with **early-exit gating** (`gate_decision` in `core/pipeline.py`):
-the first stage whose probability crosses `phish_threshold` / `benign_threshold`
-short-circuits and returns its decision; if none do, the result is `"unknown"`.
+The stages form a **single-threshold cascade** (in `Pipeline.run`, `core/pipeline.py`).
+They run in config order; each yields a phishing probability. A stage whose probability is
+`>= decision.threshold` ends the run with a `phish` verdict — the remaining stages are
+**never run** (so their live collection is skipped) — while a probability `< threshold`
+**escalates** the URL to the next stage for further examination. If no stage exits early,
+the verdict comes from **aggregating every stage's probability**: `decision.fallback_aggregation`
+(`"max"`, the default, or `"median"`) combines them into one score that is `phish` if
+`>= 0.5` (a fixed boundary, `FALLBACK_DECISION_BOUNDARY`) else `benign`; the reported
+`stage_id` is the stage that score came from (the argmax stage for `max`, the stage
+nearest the value for `median`). If no stage produced a probability (e.g. all models
+untrained), the result is `"unknown"`. The threshold and aggregation policy live in the
+top-level `pipeline.decision` block of the config. **Note:** the fallback only produces a
+`phish` when `threshold > 0.5` — otherwise any stage reaching the 0.5 boundary would have
+already early-exited, so the aggregate of the remaining sub-threshold probabilities is
+always below 0.5. (This cascade no longer mirrors the single-threshold *fused* sweep in
+`model_evaluation.ipynb`, which remains an offline-evaluation artifact only.)
 
 | Stage | `requires_raw` (training) | Fetches at predict time | Model input path |
 |-------|---------------------------|-------------------------|------------------|
@@ -91,16 +105,16 @@ entrypoint does `import phishing_engine.stages  # noqa` for this side effect. `b
 ### Feature-only degradation (key invariant)
 
 A stage whose `model_path` does **not** exist on disk is built **without** a `ModelRunner`
-(a warning is logged). It still extracts features but produces no probabilities,
-so `gate_decision` returns `"continue"` and the URL flows to the next stage. This is
-deliberate: the engine is usable before every model is trained. The shipped
+(a warning is logged). It still extracts features but produces no probabilities, so the
+cascade simply escalates past it to the next stage and the engine still yields a verdict.
+This is deliberate: the engine is usable before every model is trained. The shipped
 `domain_model.joblib` works out of the box; `url` and `content` models must be trained
 locally first.
 
 ### Label handling
 
 Models trained via `cli.train` use **string labels** (`"phish"`/`"benign"`), so `classes_`
-maps directly onto gate labels with no `label_map`. The shipped `domain_model.joblib` is a
+maps directly onto the engine labels with no `label_map`. The shipped `domain_model.joblib` is a
 legacy XGBoost model trained on `0`/`1`, so its stage config carries
 `label_map: {"1": "phish", "0": "benign"}`. `ModelRunner._normalize_*` applies this map to
 both predictions and probabilities.
@@ -121,15 +135,17 @@ attaches a single stderr handler to the `phishing_engine` logger. Level defaults
 and is overridable with `PHISHING_ENGINE_LOG_LEVEL` (e.g. `DEBUG` to see the per-lookup
 network failures the collectors swallow). `BaseStage.run` guards `collect → extract →
 predict`: a raising stage is logged with a full traceback and its message is recorded on
-`StageResult.error`, so one stage's failure degrades to feature-only (gate `"continue"`)
-instead of crashing the whole prediction.
+`StageResult.error`, so one stage's failure just makes the cascade escalate past it instead
+of crashing the whole prediction.
 
 ### Configuration
 
 `config/pipeline.json` drives everything (schema/validation in `core/config.py`, root key
 `pipeline`). Each stage entry has `id`, `enabled`, `model_path`, optional `feature_columns`,
-`label_map`, a `gate` block, and stage-specific `options` (timeouts, GeoIP DB paths, data
-dirs). `mongo` holds the connection (uri/database/collection/domain_collection).
+`label_map`, and stage-specific `options` (timeouts, GeoIP DB paths, data dirs). The
+top-level `decision` block holds the pipeline-wide policy (`threshold`,
+`positive_label`, `negative_label`); `mongo` holds the connection
+(uri/database/collection/domain_collection).
 
 ### Storage schema
 
@@ -176,7 +192,7 @@ independent; a failure on one is logged and skipped.
 phishing_engine/
   api.py                FastAPI /predict + /health (lazy-built, reused pipeline)
   cli/                  predict.py, train.py, collect.py
-  core/                 config, pipeline+gating, model_runner, training, registry, urls, serialization
+  core/                 config, pipeline+decision cascade, model_runner, training, registry, urls, serialization
   stages/               url / domain / content (BaseStage lives in core/pipeline.py)
   features/             by-stage packages: url/ domain/ content/ (each w/ extractor.py adapter) + common/
   collectors/           sources/ (phishtank, tranco, search); dns/ip/rdap/domain_record; web_fetch/tls/content

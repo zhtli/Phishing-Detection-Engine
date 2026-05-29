@@ -2,13 +2,17 @@
 
 This module defines the framework pieces shared by every stage:
   * ``BaseStage`` — the collect → extract → predict contract each stage implements.
-  * ``Pipeline`` — runs every enabled stage and fuses their scores into one verdict.
+  * ``Pipeline`` — runs the stages as a cascade, stopping at the first confident phish.
   * the result/context dataclasses passed between them.
 
-The pipeline uses a single-threshold decision: each stage yields a phishing
-probability, those are fused (``max`` by default) into one score, and the URL is
-flagged ``phish`` when that score crosses the configured ``threshold``. This matches
-the offline evaluation in ``model_evaluation.ipynb``.
+The pipeline is a single-threshold cascade: stages run in config order and each yields
+a phishing probability. A stage whose probability is ``>= threshold`` ends the run with
+a ``phish`` verdict (the remaining stages — and their live collection — are skipped); a
+probability ``< threshold`` escalates the URL to the next stage for further examination.
+If the cascade reaches the last stage without an early exit, the verdict comes from
+aggregating *every* stage's probability — the ``max`` or the ``median`` of them, per
+``decision.fallback_aggregation`` — and is ``phish`` if that aggregate is ``>= 0.5``
+(see ``FALLBACK_DECISION_BOUNDARY``) else ``benign``.
 
 Concrete stages live in ``phishing_engine.stages`` and import ``BaseStage`` from here.
 The pipeline never writes to MongoDB; persisting raw data is the collectors' job.
@@ -16,14 +20,19 @@ The pipeline never writes to MongoDB; persisting raw data is the collectors' job
 from __future__ import annotations
 
 import logging
+import statistics
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from phishing_engine.core.config import DecisionConfig
 from phishing_engine.core.model_runner import PredictionOutput
 from phishing_engine.core.urls import extract_domain, normalize_url
 
 logger = logging.getLogger(__name__)
+
+# The fixed 0.5 boundary the aggregated fallback score is compared against (independent
+# of the cascade's early-exit ``threshold``, which is normally set higher).
+FALLBACK_DECISION_BOUNDARY = 0.5
 
 
 @dataclass
@@ -33,7 +42,8 @@ class StageResult:
     Captures the model output (label/probabilities/confidence), the computed
     ``features`` and intermediate ``artifacts``, any feature-alignment gaps
     (``missing_features``/``extra_features``), and the per-stage ``decision`` (set by
-    the pipeline: this stage's own phishing probability compared to the threshold).
+    the pipeline from this stage's phishing probability vs. the threshold: ``phish`` ends
+    the cascade here, ``benign`` escalates to the next stage).
     """
 
     stage_id: str
@@ -62,13 +72,15 @@ class PipelineContext:
 
 @dataclass
 class PipelineResult:
-    """The final verdict for a URL plus every stage's intermediate result.
+    """The final verdict for a URL plus the intermediate result of every stage that ran.
 
-    ``decision`` is ``"phish"`` / ``"benign"`` from comparing the fused score to the
-    threshold, or ``"unknown"`` if no stage produced a probability. ``stage_id`` names
-    the most suspicious stage (the one contributing the highest phishing probability),
-    and ``probabilities`` holds the fused distribution ``{positive: score, negative:
-    1 - score}``.
+    ``decision`` is ``"phish"`` / ``"benign"``, or ``"unknown"`` if no stage produced a
+    probability. ``stage_id`` names the deciding stage — the one that exited the cascade
+    with a phish, or (in the aggregated fallback) the stage whose probability the
+    aggregate came from — and ``probabilities`` holds the deciding distribution
+    ``{positive: p, negative: 1 - p}`` (``p`` is the aggregate in the fallback case).
+    ``stages`` contains only the stages that actually ran — an early phish exit omits the
+    later, never-run stages.
     """
 
     decision: str
@@ -131,8 +143,8 @@ class BaseStage:
 
         Each phase is guarded: if one raises, the traceback is logged and a short error
         message is recorded on the ``StageResult``. The stage then produces no
-        probabilities, so it simply drops out of the fused score and the pipeline still
-        returns a verdict rather than crashing on a single stage's failure.
+        probabilities, so the cascade simply escalates past it to the next stage rather
+        than crashing the whole prediction on a single stage's failure.
         """
         artifacts: Dict[str, object] = {}
         features: Optional[Dict[str, object]] = None
@@ -165,13 +177,17 @@ class BaseStage:
 
 
 class Pipeline:
-    """Prediction pipeline. Runs every enabled stage and fuses their scores.
+    """Prediction pipeline. Runs the enabled stages as a single-threshold cascade.
 
-    Unlike an early-exit gate, this runs all enabled stages, collects each one's
-    phishing probability, fuses them into a single score (``max`` by default), and flags
-    the URL ``phish`` when that score crosses the configured threshold. The pipeline
-    never writes to MongoDB — collecting raw data for storage is the collectors' job;
-    each stage collects whatever it needs in-memory.
+    Stages run in config order. Each yields a phishing probability; a stage whose
+    probability is ``>= threshold`` ends the run with a ``phish`` verdict and the
+    remaining stages are never run (so their live collection is skipped), while a
+    probability ``< threshold`` escalates the URL to the next stage. If no stage exits
+    early, the verdict comes from aggregating every stage's probability (``max`` or
+    ``median`` per ``decision.fallback_aggregation``) and comparing it to the fixed
+    ``FALLBACK_DECISION_BOUNDARY`` of 0.5. The pipeline never writes to MongoDB —
+    collecting raw data for storage is the collectors' job; each stage collects whatever
+    it needs in-memory.
     """
 
     def __init__(self, stages, decision: Optional[DecisionConfig] = None):
@@ -180,17 +196,27 @@ class Pipeline:
         self.decision = decision or DecisionConfig()
 
     def run(self, url: str) -> PipelineResult:
-        """Run every enabled stage, fuse their phishing probabilities, and decide.
+        """Run the enabled stages as a cascade and return the verdict.
 
-        Disabled stages are skipped. Each remaining stage contributes its
-        ``P(positive)`` (stages with no model / no probability are simply omitted). The
-        contributions are fused per ``decision.fusion`` and compared to
-        ``decision.threshold``; the verdict is ``positive`` / ``negative`` accordingly,
-        or ``"unknown"`` if no stage produced a probability.
+        Disabled stages are skipped. Each remaining stage produces ``P(positive)`` (a
+        stage with no model / no probability — or one that errored — cannot decide, so the
+        cascade escalates past it). The first stage with ``P(positive) >= threshold`` ends
+        the run as ``positive`` and the later stages are never run; otherwise the URL is
+        escalated. If no stage exits early, the verdict comes from aggregating every
+        stage's probability (``max`` or ``median``) against ``FALLBACK_DECISION_BOUNDARY``,
+        or is ``"unknown"`` if no stage produced a probability.
         """
         normalized = normalize_url(url)
         domain = extract_domain(normalized)
         context = PipelineContext(url=url, normalized_url=normalized, domain=domain)
+
+        decision = self.decision
+        positive, negative = decision.positive_label, decision.negative_label
+        threshold = decision.threshold
+
+        # Every (stage_id, P(positive)) the cascade saw, in run order.
+        collected: List[Tuple[str, float]] = []
+        early_exit: Optional[Tuple[str, float]] = None
 
         for stage in self.stages:
             if not stage.config.enabled:
@@ -198,27 +224,55 @@ class Pipeline:
             result = stage.run(context)
             context.stage_results[stage.stage_id] = result
 
-        return self._decide(context)
-
-    def _decide(self, context: PipelineContext) -> PipelineResult:
-        """Fuse the stages' phishing probabilities into the final ``PipelineResult``."""
-        decision = self.decision
-        positive, negative = decision.positive_label, decision.negative_label
-        threshold = decision.threshold
-
-        # Gather each stage's positive-class probability (skip stages without one), and
-        # tag each contributing stage with its own threshold decision for diagnostics.
-        scored: List[tuple] = []  # (stage_id, p_positive)
-        for stage_id, result in context.stage_results.items():
-            if not result.probabilities:
-                continue
-            p = result.probabilities.get(positive)
+            p = result.probabilities.get(positive) if result.probabilities else None
             if p is None:
+                # No usable probability (untrained model, error, ...) — escalate.
                 continue
-            scored.append((stage_id, p))
+            collected.append((stage.stage_id, p))
             result.decision = positive if p >= threshold else negative
+            if p >= threshold:
+                # Confident phish: stop here and skip the remaining stages.
+                early_exit = (stage.stage_id, p)
+                break
 
-        if not scored:
+        return self._build_result(context, collected, early_exit)
+
+    def _aggregate(self, collected: List[Tuple[str, float]]) -> Tuple[str, float]:
+        """Combine all stages' probabilities into one fallback score and the stage it came from.
+
+        ``max`` (the default) lets the single most suspicious stage drive the verdict;
+        ``median`` requires broader agreement. For ``median`` the value may fall between
+        two stages, so the reported stage is the one whose probability is nearest it.
+        """
+        if self.decision.fallback_aggregation == "median":
+            agg = statistics.median(p for _, p in collected)
+            stage_id = min(collected, key=lambda sp: abs(sp[1] - agg))[0]
+            return stage_id, agg
+        stage_id, agg = max(collected, key=lambda sp: sp[1])
+        return stage_id, agg
+
+    def _build_result(
+        self,
+        context: PipelineContext,
+        collected: List[Tuple[str, float]],
+        early_exit: Optional[Tuple[str, float]],
+    ) -> PipelineResult:
+        """Turn the cascade outcome into the final ``PipelineResult``.
+
+        An ``early_exit`` (a stage at/above ``threshold``) is a ``positive`` verdict from
+        that stage. Otherwise the collected probabilities are aggregated and compared to
+        the fixed ``FALLBACK_DECISION_BOUNDARY``. With nothing collected the verdict is
+        ``"unknown"``.
+        """
+        positive, negative = self.decision.positive_label, self.decision.negative_label
+
+        if early_exit is not None:
+            stage_id, p = early_exit
+            verdict = positive
+        elif collected:
+            stage_id, p = self._aggregate(collected)
+            verdict = positive if p >= FALLBACK_DECISION_BOUNDARY else negative
+        else:
             return PipelineResult(
                 decision="unknown",
                 stage_id=None,
@@ -228,25 +282,11 @@ class Pipeline:
                 stages=context.stage_results,
             )
 
-        score = self._fuse([p for _, p in scored], decision.fusion)
-        verdict = positive if score >= threshold else negative
-        # Attribute the verdict to the most suspicious stage (highest phishing prob).
-        top_stage_id = max(scored, key=lambda item: item[1])[0]
-
         return PipelineResult(
             decision=verdict,
-            stage_id=top_stage_id,
+            stage_id=stage_id,
             label=verdict,
-            confidence=score if verdict == positive else 1.0 - score,
-            probabilities={positive: score, negative: 1.0 - score},
+            confidence=p if verdict == positive else 1.0 - p,
+            probabilities={positive: p, negative: 1.0 - p},
             stages=context.stage_results,
         )
-
-    @staticmethod
-    def _fuse(probabilities: List[float], how: str) -> float:
-        """Combine per-stage phishing probabilities into one score (``max`` or ``mean``)."""
-        if not probabilities:
-            return 0.0
-        if how == "mean":
-            return sum(probabilities) / len(probabilities)
-        return max(probabilities)

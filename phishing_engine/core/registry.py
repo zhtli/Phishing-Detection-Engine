@@ -49,7 +49,7 @@ def build_stages(configs: List[StageConfig]):
                 )
             else:
                 # Model not trained yet: the stage still extracts features but produces
-                # no prediction, so it just drops out of the fused decision score.
+                # no prediction, so the cascade simply escalates past it to the next stage.
                 logger.warning(
                     "stage '%s': model not found at %s; running feature-only "
                     "(train it with train_cli).",

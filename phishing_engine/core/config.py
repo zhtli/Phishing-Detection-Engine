@@ -14,19 +14,26 @@ from pydantic import BaseModel, Field
 
 
 class DecisionConfig(BaseModel):
-    """Pipeline-wide single-threshold decision policy.
+    """Pipeline-wide single-threshold cascade policy.
 
-    Every enabled stage is run and its phishing probability collected. Those per-stage
-    probabilities are fused into one score (``max`` by default, or ``mean``); a URL is
-    labeled ``positive_label`` when the fused score is ``>= threshold`` and
-    ``negative_label`` otherwise. If no stage produced a probability (e.g. all models are
-    untrained), the verdict is ``"unknown"``.
+    Enabled stages run in order. A stage whose phishing probability is ``>= threshold``
+    ends the cascade and the URL is labeled ``positive_label`` (the remaining stages are
+    skipped); a probability below ``threshold`` escalates the URL to the next stage. If no
+    stage exits early, the verdict comes from aggregating *every* stage's probability:
+    ``fallback_aggregation`` (``"max"`` or ``"median"``) combines them into one score,
+    which is ``positive_label`` if ``>= 0.5`` else ``negative_label``. If no stage produced
+    a probability (e.g. all models are untrained), the verdict is ``"unknown"``.
+
+    Note: the fallback only matters when ``threshold > 0.5`` — otherwise any stage at or
+    above the 0.5 boundary would already have early-exited as ``positive_label``, so the
+    aggregate of the remaining (sub-threshold) probabilities is always below 0.5.
     """
 
     threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-    fusion: Literal["max", "mean"] = "max"
     positive_label: str = "phish"
     negative_label: str = "benign"
+    # How to combine all stages' probabilities when the cascade ends with no early exit.
+    fallback_aggregation: Literal["max", "median"] = "max"
 
 
 class StageConfig(BaseModel):

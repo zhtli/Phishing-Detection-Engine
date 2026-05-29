@@ -7,10 +7,10 @@
       "domain_collection": "domain_records"
     },
     "decision": {
-      "threshold": 0.5,
-      "fusion": "max",
+      "threshold": 0.8,
       "positive_label": "phish",
-      "negative_label": "benign"
+      "negative_label": "benign",
+      "fallback_aggregation": "max"
     },
     "stages": [
       {

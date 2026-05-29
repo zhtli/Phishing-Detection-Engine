@@ -2,7 +2,6 @@
 import tldextract
 import re
 from .ns_log import NsLog
-from tqdm import tqdm
 
 class domain_parser(object):
 
@@ -11,12 +10,12 @@ class domain_parser(object):
         self.logger = NsLog("log")
 
     def parse(self, domain_list, class_info, count, url_metadata=None):
-        self.logger.info("domain_parser.parse() is running")
+        self.logger.debug("domain_parser.parse() is running")
 
         parsed_domain_list = []
         registered_domain_lst = []
 
-        for line in tqdm(domain_list):
+        for line in domain_list:
 
             domain = {}
             raw_line = line
@@ -60,11 +59,11 @@ class domain_parser(object):
         return parsed_domain_list
 
     def parse_nonlabeled_samples(self, domain_list, count=0):
-        self.logger.info("domain_parser.parse_nonlabeled_samples() is running")
+        self.logger.debug("domain_parser.parse_nonlabeled_samples() is running")
         parsed_domain_list = []
         registered_domain_lst = []
 
-        for line in tqdm(domain_list):
+        for line in domain_list:
             domain = {}
 
             extracted_domain = tldextract.extract(line)

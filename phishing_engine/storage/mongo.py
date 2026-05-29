@@ -168,6 +168,16 @@ class MongoStore:
 
     # ------------------------------------------------------------------- reads
 
+    def count_labeled(self, require: Optional[str] = None, limit: int = 0) -> int:
+        """Count labeled documents that ``iter_labeled`` would yield (for progress totals)."""
+        query: dict = {"label": {"$in": ["phish", "benign"]}}
+        if require == "domain_record":
+            query["raw.domain_record_ref"] = {"$exists": True}
+        elif require == "content":
+            query["raw.content"] = {"$exists": True}
+        total = self.collection.count_documents(query)
+        return min(total, limit) if limit else total
+
     def iter_labeled(self, require: Optional[str] = None, limit: int = 0) -> Iterator[dict]:
         """Iterate documents that carry a label.
 

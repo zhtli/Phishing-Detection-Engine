@@ -38,7 +38,7 @@ def get_pipeline() -> Pipeline:
     global _pipeline
     if _pipeline is None:
         config = load_config(CONFIG_PATH)
-        _pipeline = Pipeline(build_stages(config.pipeline.stages))
+        _pipeline = Pipeline(build_stages(config.pipeline.stages), config.pipeline.decision)
     return _pipeline
 
 

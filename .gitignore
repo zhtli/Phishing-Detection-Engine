@@ -221,3 +221,7 @@ GeoLite2-DB/
 Master_Thesis/
 
 models/
+
+# Notebook feature cache + evaluation outputs
+feature_cache/
+eval_results/

@@ -1,27 +1,30 @@
 """Pydantic models and loader for ``config/pipeline.json``.
 
 The config drives the whole engine: the ordered stage list, each stage's model path,
-feature columns, label remapping and gate thresholds, plus the MongoDB connection.
+feature columns and label remapping, the pipeline-wide decision policy, plus the
+MongoDB connection.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
-class GateConfig(BaseModel):
-    """Per-stage decision thresholds and the labels they map to.
+class DecisionConfig(BaseModel):
+    """Pipeline-wide single-threshold decision policy.
 
-    A stage exits the pipeline as ``positive_label`` when its positive probability is
-    ``>= phish_threshold``, or as ``negative_label`` when the negative probability is
-    ``>= benign_threshold``. ``None`` disables that side of the gate.
+    Every enabled stage is run and its phishing probability collected. Those per-stage
+    probabilities are fused into one score (``max`` by default, or ``mean``); a URL is
+    labeled ``positive_label`` when the fused score is ``>= threshold`` and
+    ``negative_label`` otherwise. If no stage produced a probability (e.g. all models are
+    untrained), the verdict is ``"unknown"``.
     """
 
-    phish_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    benign_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    fusion: Literal["max", "mean"] = "max"
     positive_label: str = "phish"
     negative_label: str = "benign"
 
@@ -40,7 +43,6 @@ class StageConfig(BaseModel):
     model_path: Optional[str] = None
     feature_columns: Optional[List[str]] = None
     label_map: Dict[str, str] = Field(default_factory=dict)
-    gate: GateConfig = Field(default_factory=GateConfig)
     options: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -54,9 +56,10 @@ class MongoConfig(BaseModel):
 
 
 class PipelineConfig(BaseModel):
-    """The ordered stages plus the Mongo connection."""
+    """The ordered stages, the decision policy, and the Mongo connection."""
 
     stages: List[StageConfig]
+    decision: DecisionConfig = Field(default_factory=DecisionConfig)
     mongo: MongoConfig = Field(default_factory=MongoConfig)
 
 

@@ -6,6 +6,12 @@
       "collection": "url_documents",
       "domain_collection": "domain_records"
     },
+    "decision": {
+      "threshold": 0.5,
+      "fusion": "max",
+      "positive_label": "phish",
+      "negative_label": "benign"
+    },
     "stages": [
       {
         "id": "url",
@@ -53,12 +59,6 @@
           "random_words"
         ],
         "label_map": {},
-        "gate": {
-          "phish_threshold": 0.85,
-          "benign_threshold": 0.9,
-          "positive_label": "phish",
-          "negative_label": "benign"
-        },
         "options": {}
       },
       {
@@ -68,12 +68,6 @@
         "label_map": {
           "1": "phish",
           "0": "benign"
-        },
-        "gate": {
-          "phish_threshold": 0.8,
-          "benign_threshold": 0.9,
-          "positive_label": "phish",
-          "negative_label": "benign"
         },
         "options": {
           "data_dir": "phishing_engine/features/domain/data",
@@ -199,12 +193,6 @@
           "tls_common_name_count"
         ],
         "label_map": {},
-        "gate": {
-          "phish_threshold": 0.8,
-          "benign_threshold": 0.9,
-          "positive_label": "phish",
-          "negative_label": "benign"
-        },
         "options": {
           "max_html_bytes": 200000,
           "tls_timeout": 10

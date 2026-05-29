@@ -49,7 +49,7 @@ def build_stages(configs: List[StageConfig]):
                 )
             else:
                 # Model not trained yet: the stage still extracts features but produces
-                # no prediction, so the gate passes the URL on to the next stage.
+                # no prediction, so it just drops out of the fused decision score.
                 logger.warning(
                     "stage '%s': model not found at %s; running feature-only "
                     "(train it with train_cli).",

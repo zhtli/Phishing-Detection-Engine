@@ -24,7 +24,7 @@ def build_pipeline(config_path: str) -> Pipeline:
     """Load the config and build a prediction ``Pipeline`` (no Mongo store attached)."""
     config = load_config(config_path)
     stages = build_stages(config.pipeline.stages)
-    return Pipeline(stages)
+    return Pipeline(stages, config.pipeline.decision)
 
 
 def main(argv: Optional[List[str]] = None) -> int:

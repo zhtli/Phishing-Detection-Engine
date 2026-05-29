@@ -1,9 +1,14 @@
-"""Prediction pipeline core: the gated multi-stage orchestration and its data types.
+"""Prediction pipeline core: the multi-stage orchestration and its data types.
 
 This module defines the framework pieces shared by every stage:
   * ``BaseStage`` — the collect → extract → predict contract each stage implements.
-  * ``Pipeline`` — runs the ordered stages with early-exit gating.
+  * ``Pipeline`` — runs every enabled stage and fuses their scores into one verdict.
   * the result/context dataclasses passed between them.
+
+The pipeline uses a single-threshold decision: each stage yields a phishing
+probability, those are fused (``max`` by default) into one score, and the URL is
+flagged ``phish`` when that score crosses the configured ``threshold``. This matches
+the offline evaluation in ``model_evaluation.ipynb``.
 
 Concrete stages live in ``phishing_engine.stages`` and import ``BaseStage`` from here.
 The pipeline never writes to MongoDB; persisting raw data is the collectors' job.
@@ -14,7 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from phishing_engine.core.config import GateConfig
+from phishing_engine.core.config import DecisionConfig
 from phishing_engine.core.model_runner import PredictionOutput
 from phishing_engine.core.urls import extract_domain, normalize_url
 
@@ -27,8 +32,8 @@ class StageResult:
 
     Captures the model output (label/probabilities/confidence), the computed
     ``features`` and intermediate ``artifacts``, any feature-alignment gaps
-    (``missing_features``/``extra_features``), and the gate ``decision`` (set by the
-    pipeline once thresholds are applied).
+    (``missing_features``/``extra_features``), and the per-stage ``decision`` (set by
+    the pipeline: this stage's own phishing probability compared to the threshold).
     """
 
     stage_id: str
@@ -59,8 +64,11 @@ class PipelineContext:
 class PipelineResult:
     """The final verdict for a URL plus every stage's intermediate result.
 
-    ``decision`` is the gate label that short-circuited the pipeline (``"phish"`` /
-    ``"benign"``) or ``"unknown"`` if no stage crossed a threshold.
+    ``decision`` is ``"phish"`` / ``"benign"`` from comparing the fused score to the
+    threshold, or ``"unknown"`` if no stage produced a probability. ``stage_id`` names
+    the most suspicious stage (the one contributing the highest phishing probability),
+    and ``probabilities`` holds the fused distribution ``{positive: score, negative:
+    1 - score}``.
     """
 
     decision: str
@@ -123,8 +131,8 @@ class BaseStage:
 
         Each phase is guarded: if one raises, the traceback is logged and a short error
         message is recorded on the ``StageResult``. The stage then produces no
-        probabilities, so the gate returns ``"continue"`` and the pipeline moves on rather
-        than crashing the whole prediction on a single stage's failure.
+        probabilities, so it simply drops out of the fused score and the pipeline still
+        returns a verdict rather than crashing on a single stage's failure.
         """
         artifacts: Dict[str, object] = {}
         features: Optional[Dict[str, object]] = None
@@ -157,22 +165,28 @@ class BaseStage:
 
 
 class Pipeline:
-    """Prediction pipeline. Runs ordered stages with early-exit gating.
+    """Prediction pipeline. Runs every enabled stage and fuses their scores.
 
-    The pipeline never writes to MongoDB — collection of raw data for storage is the
-    collectors' job. Each stage collects whatever it needs in-memory.
+    Unlike an early-exit gate, this runs all enabled stages, collects each one's
+    phishing probability, fuses them into a single score (``max`` by default), and flags
+    the URL ``phish`` when that score crosses the configured threshold. The pipeline
+    never writes to MongoDB — collecting raw data for storage is the collectors' job;
+    each stage collects whatever it needs in-memory.
     """
 
-    def __init__(self, stages):
-        """Store the ordered list of (already built) stages to run."""
+    def __init__(self, stages, decision: Optional[DecisionConfig] = None):
+        """Store the ordered stages and the (single-threshold) decision policy."""
         self.stages = stages
+        self.decision = decision or DecisionConfig()
 
     def run(self, url: str) -> PipelineResult:
-        """Score ``url`` through the stages, returning as soon as a gate decides.
+        """Run every enabled stage, fuse their phishing probabilities, and decide.
 
-        Disabled stages are skipped. The first stage whose score crosses its
-        ``phish``/``benign`` threshold short-circuits and its decision is returned;
-        if none do, the result is ``"unknown"``.
+        Disabled stages are skipped. Each remaining stage contributes its
+        ``P(positive)`` (stages with no model / no probability are simply omitted). The
+        contributions are fused per ``decision.fusion`` and compared to
+        ``decision.threshold``; the verdict is ``positive`` / ``negative`` accordingly,
+        or ``"unknown"`` if no stage produced a probability.
         """
         normalized = normalize_url(url)
         domain = extract_domain(normalized)
@@ -181,52 +195,58 @@ class Pipeline:
         for stage in self.stages:
             if not stage.config.enabled:
                 continue
-
             result = stage.run(context)
             context.stage_results[stage.stage_id] = result
 
-            decision = gate_decision(result, stage.config.gate)
-            if decision != "continue":
-                result.decision = decision
-                return PipelineResult(
-                    decision=decision,
-                    stage_id=stage.stage_id,
-                    label=result.label,
-                    confidence=result.confidence,
-                    probabilities=result.probabilities,
-                    stages=context.stage_results,
-                )
+        return self._decide(context)
+
+    def _decide(self, context: PipelineContext) -> PipelineResult:
+        """Fuse the stages' phishing probabilities into the final ``PipelineResult``."""
+        decision = self.decision
+        positive, negative = decision.positive_label, decision.negative_label
+        threshold = decision.threshold
+
+        # Gather each stage's positive-class probability (skip stages without one), and
+        # tag each contributing stage with its own threshold decision for diagnostics.
+        scored: List[tuple] = []  # (stage_id, p_positive)
+        for stage_id, result in context.stage_results.items():
+            if not result.probabilities:
+                continue
+            p = result.probabilities.get(positive)
+            if p is None:
+                continue
+            scored.append((stage_id, p))
+            result.decision = positive if p >= threshold else negative
+
+        if not scored:
+            return PipelineResult(
+                decision="unknown",
+                stage_id=None,
+                label=None,
+                confidence=None,
+                probabilities={},
+                stages=context.stage_results,
+            )
+
+        score = self._fuse([p for _, p in scored], decision.fusion)
+        verdict = positive if score >= threshold else negative
+        # Attribute the verdict to the most suspicious stage (highest phishing prob).
+        top_stage_id = max(scored, key=lambda item: item[1])[0]
 
         return PipelineResult(
-            decision="unknown",
-            stage_id=None,
-            label=None,
-            confidence=None,
-            probabilities={},
+            decision=verdict,
+            stage_id=top_stage_id,
+            label=verdict,
+            confidence=score if verdict == positive else 1.0 - score,
+            probabilities={positive: score, negative: 1.0 - score},
             stages=context.stage_results,
         )
 
-
-def gate_decision(result: StageResult, gate: GateConfig) -> str:
-    """Apply a stage's thresholds to its probabilities.
-
-    Returns the positive label when ``P(positive) >= phish_threshold``, the negative
-    label when ``P(negative) >= benign_threshold``, otherwise ``"continue"`` (meaning
-    the pipeline should move on to the next stage). A stage with no probabilities
-    (e.g. an untrained model) always yields ``"continue"``.
-    """
-    if not result.probabilities:
-        return "continue"
-
-    positive_prob = result.probabilities.get(gate.positive_label)
-    negative_prob = result.probabilities.get(gate.negative_label)
-
-    if gate.phish_threshold is not None and positive_prob is not None:
-        if positive_prob >= gate.phish_threshold:
-            return gate.positive_label
-
-    if gate.benign_threshold is not None and negative_prob is not None:
-        if negative_prob >= gate.benign_threshold:
-            return gate.negative_label
-
-    return "continue"
+    @staticmethod
+    def _fuse(probabilities: List[float], how: str) -> float:
+        """Combine per-stage phishing probabilities into one score (``max`` or ``mean``)."""
+        if not probabilities:
+            return 0.0
+        if how == "mean":
+            return sum(probabilities) / len(probabilities)
+        return max(probabilities)

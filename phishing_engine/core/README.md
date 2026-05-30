@@ -16,9 +16,10 @@ here knows about a *specific* stage; concrete stages live in [`../stages/`](../s
 ### How a prediction flows
 `Pipeline.run(url)` runs the enabled stages in order as a single-threshold cascade. For
 each stage: `collect` → `extract_features` → `predict`. A stage whose phishing probability
-is `>= decision.threshold` ends the run as `phish` and the remaining stages are skipped; a
+is `>= decision.threshold` ends the run with that stage's own model verdict (`phish` if
+its probability is `>= 0.5` else `benign`) and the remaining stages are skipped; a
 probability below the threshold escalates the URL to the next stage. If no stage exits
-early, every stage's probability is aggregated — `max` (default) or `median` per
+early, every stage's probability is aggregated — `mean` (default), `max`, or `median` per
 `decision.fallback_aggregation` — and the verdict is `phish` if that aggregate is `>= 0.5`
 else `benign` (this fallback only fires `phish` when `threshold > 0.5`). If no stage
 produced a probability (e.g. all models untrained) the result is `"unknown"`.

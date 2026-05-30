@@ -16,11 +16,12 @@ from pydantic import BaseModel, Field
 class DecisionConfig(BaseModel):
     """Pipeline-wide single-threshold cascade policy.
 
-    Enabled stages run in order. A stage whose phishing probability is ``>= threshold``
-    ends the cascade and the URL is labeled ``positive_label`` (the remaining stages are
-    skipped); a probability below ``threshold`` escalates the URL to the next stage. If no
+    Enabled stages run in order. A stage whose phishing probability is ``>= threshold`` is
+    trusted to decide on its own: the cascade ends with that stage's model verdict
+    (``positive_label`` if its probability is ``>= 0.5`` else ``negative_label``), the
+    remaining stages skipped; a probability below ``threshold`` escalates to the next. If no
     stage exits early, the verdict comes from aggregating *every* stage's probability:
-    ``fallback_aggregation`` (``"max"`` or ``"median"``) combines them into one score,
+    ``fallback_aggregation`` (``"mean"`` (default), ``"max"``, or ``"median"``) combines them into one score,
     which is ``positive_label`` if ``>= 0.5`` else ``negative_label``. If no stage produced
     a probability (e.g. all models are untrained), the verdict is ``"unknown"``.
 
@@ -33,7 +34,7 @@ class DecisionConfig(BaseModel):
     positive_label: str = "phish"
     negative_label: str = "benign"
     # How to combine all stages' probabilities when the cascade ends with no early exit.
-    fallback_aggregation: Literal["max", "median"] = "max"
+    fallback_aggregation: Literal["max", "mean", "median"] = "mean"
 
 
 class StageConfig(BaseModel):

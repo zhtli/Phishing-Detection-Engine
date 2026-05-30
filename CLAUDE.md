@@ -77,14 +77,15 @@ models expect) unless you intend to retrain.
 
 The stages form a **single-threshold cascade** (in `Pipeline.run`, `core/pipeline.py`).
 They run in config order; each yields a phishing probability. A stage whose probability is
-`>= decision.threshold` ends the run with a `phish` verdict — the remaining stages are
-**never run** (so their live collection is skipped) — while a probability `< threshold`
-**escalates** the URL to the next stage for further examination. If no stage exits early,
+`>= decision.threshold` is trusted to decide on its own — the run ends with that stage's
+own model verdict (`phish` if its probability is `>= 0.5` else `benign`) and the remaining
+stages are **never run** (so their live collection is skipped) — while a probability
+`< threshold` **escalates** the URL to the next stage for further examination. If no stage exits early,
 the verdict comes from **aggregating every stage's probability**: `decision.fallback_aggregation`
-(`"max"`, the default, or `"median"`) combines them into one score that is `phish` if
-`>= 0.5` (a fixed boundary, `FALLBACK_DECISION_BOUNDARY`) else `benign`; the reported
-`stage_id` is the stage that score came from (the argmax stage for `max`, the stage
-nearest the value for `median`). If no stage produced a probability (e.g. all models
+(`"mean"` (the default), `"max"`, or `"median"`) combines them into one score that is
+`phish` if `>= 0.5` (a fixed boundary, `FALLBACK_DECISION_BOUNDARY`) else `benign`; the
+reported `stage_id` is the stage that score came from (the argmax stage for `max`, the
+stage nearest the value for `mean`/`median`). If no stage produced a probability (e.g. all models
 untrained), the result is `"unknown"`. The threshold and aggregation policy live in the
 top-level `pipeline.decision` block of the config. **Note:** the fallback only produces a
 `phish` when `threshold > 0.5` — otherwise any stage reaching the 0.5 boundary would have

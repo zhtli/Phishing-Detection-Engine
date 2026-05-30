@@ -6,11 +6,13 @@ This module defines the framework pieces shared by every stage:
   * the result/context dataclasses passed between them.
 
 The pipeline is a single-threshold cascade: stages run in config order and each yields
-a phishing probability. A stage whose probability is ``>= threshold`` ends the run with
-a ``phish`` verdict (the remaining stages — and their live collection — are skipped); a
+a phishing probability. A stage whose probability is ``>= threshold`` is trusted to decide
+on its own — the run ends with that stage's model verdict (``phish`` if its probability is
+``>= 0.5`` else ``benign``) and the remaining stages (and their live collection) are
+skipped; a
 probability ``< threshold`` escalates the URL to the next stage for further examination.
 If the cascade reaches the last stage without an early exit, the verdict comes from
-aggregating *every* stage's probability — the ``max`` or the ``median`` of them, per
+aggregating *every* stage's probability — the ``max``, ``mean``, or ``median`` of them, per
 ``decision.fallback_aggregation`` — and is ``phish`` if that aggregate is ``>= 0.5``
 (see ``FALLBACK_DECISION_BOUNDARY``) else ``benign``.
 
@@ -42,8 +44,9 @@ class StageResult:
     Captures the model output (label/probabilities/confidence), the computed
     ``features`` and intermediate ``artifacts``, any feature-alignment gaps
     (``missing_features``/``extra_features``), and the per-stage ``decision`` (set by
-    the pipeline from this stage's phishing probability vs. the threshold: ``phish`` ends
-    the cascade here, ``benign`` escalates to the next stage).
+    the pipeline from this stage's phishing probability vs. the threshold: ``>= threshold``
+    ends the cascade here with this stage's own model verdict, ``< threshold`` escalates to
+    the next stage).
     """
 
     stage_id: str
@@ -180,11 +183,12 @@ class Pipeline:
     """Prediction pipeline. Runs the enabled stages as a single-threshold cascade.
 
     Stages run in config order. Each yields a phishing probability; a stage whose
-    probability is ``>= threshold`` ends the run with a ``phish`` verdict and the
-    remaining stages are never run (so their live collection is skipped), while a
+    probability is ``>= threshold`` is trusted to decide on its own (the run ends with that
+    stage's model verdict, ``phish`` or ``benign``) and the remaining stages are never run
+    (so their live collection is skipped), while a
     probability ``< threshold`` escalates the URL to the next stage. If no stage exits
-    early, the verdict comes from aggregating every stage's probability (``max`` or
-    ``median`` per ``decision.fallback_aggregation``) and comparing it to the fixed
+    early, the verdict comes from aggregating every stage's probability (``max``, ``mean``,
+    or ``median`` per ``decision.fallback_aggregation``) and comparing it to the fixed
     ``FALLBACK_DECISION_BOUNDARY`` of 0.5. The pipeline never writes to MongoDB —
     collecting raw data for storage is the collectors' job; each stage collects whatever
     it needs in-memory.
@@ -200,10 +204,12 @@ class Pipeline:
 
         Disabled stages are skipped. Each remaining stage produces ``P(positive)`` (a
         stage with no model / no probability — or one that errored — cannot decide, so the
-        cascade escalates past it). The first stage with ``P(positive) >= threshold`` ends
-        the run as ``positive`` and the later stages are never run; otherwise the URL is
-        escalated. If no stage exits early, the verdict comes from aggregating every
-        stage's probability (``max`` or ``median``) against ``FALLBACK_DECISION_BOUNDARY``,
+        cascade escalates past it). The first stage with ``P(positive) >= threshold`` is
+        trusted to decide on its own: the run ends with that stage's model verdict
+        (``positive`` if ``P(positive) >= 0.5`` else ``negative``) and the later stages are
+        never run; otherwise the URL is escalated. If no stage exits early, the verdict
+        comes from aggregating every
+        stage's probability (``max``, ``mean``, or ``median``) against ``FALLBACK_DECISION_BOUNDARY``,
         or is ``"unknown"`` if no stage produced a probability.
         """
         normalized = normalize_url(url)
@@ -229,26 +235,34 @@ class Pipeline:
                 # No usable probability (untrained model, error, ...) — escalate.
                 continue
             collected.append((stage.stage_id, p))
-            result.decision = positive if p >= threshold else negative
             if p >= threshold:
-                # Confident phish: stop here and skip the remaining stages.
+                # Trusted: this stage is confident enough to decide on its own, so adopt
+                # its model verdict (``positive`` if P(positive) >= 0.5 else ``negative``)
+                # and skip the remaining stages.
+                result.decision = positive if p >= FALLBACK_DECISION_BOUNDARY else negative
                 early_exit = (stage.stage_id, p)
                 break
+            # Below threshold: not trusted on its own — escalate to the next stage.
+            result.decision = negative
 
         return self._build_result(context, collected, early_exit)
 
     def _aggregate(self, collected: List[Tuple[str, float]]) -> Tuple[str, float]:
         """Combine all stages' probabilities into one fallback score and the stage it came from.
 
-        ``max`` (the default) lets the single most suspicious stage drive the verdict;
-        ``median`` requires broader agreement. For ``median`` the value may fall between
-        two stages, so the reported stage is the one whose probability is nearest it.
+        ``max`` lets the single most suspicious stage drive the verdict; ``mean`` (the
+        default) and ``median`` require broader agreement across stages. For ``mean`` and
+        ``median`` the aggregate may fall between two stages, so the reported stage is the
+        one whose probability is nearest it.
         """
-        if self.decision.fallback_aggregation == "median":
+        mode = self.decision.fallback_aggregation
+        if mode == "max":
+            return max(collected, key=lambda sp: sp[1])
+        if mode == "mean":
+            agg = statistics.fmean(p for _, p in collected)
+        else:  # "median"
             agg = statistics.median(p for _, p in collected)
-            stage_id = min(collected, key=lambda sp: abs(sp[1] - agg))[0]
-            return stage_id, agg
-        stage_id, agg = max(collected, key=lambda sp: sp[1])
+        stage_id = min(collected, key=lambda sp: abs(sp[1] - agg))[0]
         return stage_id, agg
 
     def _build_result(
@@ -259,16 +273,18 @@ class Pipeline:
     ) -> PipelineResult:
         """Turn the cascade outcome into the final ``PipelineResult``.
 
-        An ``early_exit`` (a stage at/above ``threshold``) is a ``positive`` verdict from
-        that stage. Otherwise the collected probabilities are aggregated and compared to
+        An ``early_exit`` (a stage at/above ``threshold``) adopts that stage's own model
+        verdict — ``positive`` if its ``P(positive) >= FALLBACK_DECISION_BOUNDARY`` else
+        ``negative``. Otherwise the collected probabilities are aggregated and compared to
         the fixed ``FALLBACK_DECISION_BOUNDARY``. With nothing collected the verdict is
         ``"unknown"``.
         """
         positive, negative = self.decision.positive_label, self.decision.negative_label
 
         if early_exit is not None:
+            # The triggering stage decides with its own model verdict, not a forced phish.
             stage_id, p = early_exit
-            verdict = positive
+            verdict = positive if p >= FALLBACK_DECISION_BOUNDARY else negative
         elif collected:
             stage_id, p = self._aggregate(collected)
             verdict = positive if p >= FALLBACK_DECISION_BOUNDARY else negative

@@ -35,10 +35,11 @@ responsibilities:
 ### Stages (prediction)
 
 The enabled stages run in order as a single-threshold cascade. A stage whose phishing
-probability is `>= decision.threshold` flags the URL `phish` and ends the run (the
+probability is `>= decision.threshold` is trusted to decide on its own and ends the run
+with that stage's model verdict (`phish` if its probability is `>= 0.5` else `benign`; the
 remaining stages are skipped); a probability below the threshold escalates the URL to the
-next stage. If no stage exits early, the stages' probabilities are aggregated — `max`
-(default) or `median` per `decision.fallback_aggregation` — and the verdict is `phish` if
+next stage. If no stage exits early, the stages' probabilities are aggregated — `mean`
+(default), `max`, or `median` per `decision.fallback_aggregation` — and the verdict is `phish` if
 the aggregate is `>= 0.5` else `benign` (this fallback only fires `phish` when
 `threshold > 0.5`), or `unknown` if no stage scored.
 

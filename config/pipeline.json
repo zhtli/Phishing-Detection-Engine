@@ -10,7 +10,7 @@
       "threshold": 0.8,
       "positive_label": "phish",
       "negative_label": "benign",
-      "fallback_aggregation": "max"
+      "fallback_aggregation": "mean"
     },
     "stages": [
       {

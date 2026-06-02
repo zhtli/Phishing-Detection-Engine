@@ -17,7 +17,7 @@ from phishing_engine.core.config import load_config
 from phishing_engine.core.logging_setup import configure_logging
 from phishing_engine.core.registry import get_stage
 from phishing_engine.storage.mongo import MongoStore
-from phishing_engine.core.training import train_stage
+from phishing_engine.core.training import MODEL_TYPES, train_stage
 
 import phishing_engine.stages  # noqa: F401  (registers stages)
 
@@ -28,7 +28,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--stage", required=True, help="Stage id to train (url|domain|content) or 'all'")
     parser.add_argument("--config", default="config/pipeline.json", help="Path to pipeline config JSON")
     parser.add_argument("--model-type", default="random_forest",
-                        choices=["random_forest", "gradient_boosting"], help="Classifier to train")
+                        choices=list(MODEL_TYPES),
+                        help="Classifier to train (mirrors model_evaluation.ipynb)")
     parser.add_argument("--limit", type=int, default=0, help="Max labeled documents to use (0 = all)")
     parser.add_argument("--output", default=None, help="Override output model path (single stage only)")
     args = parser.parse_args(argv)

@@ -62,20 +62,6 @@
         "options": {}
       },
       {
-        "id": "domain",
-        "enabled": true,
-        "model_path": "phishing_engine/models/domain_model.joblib",
-        "label_map": {
-          "1": "phish",
-          "0": "benign"
-        },
-        "options": {
-          "data_dir": "phishing_engine/features/domain/data",
-          "geoip_city_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-City.mmdb",
-          "geoip_asn_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-ASN.mmdb"
-        }
-      },
-      {
         "id": "content",
         "enabled": true,
         "model_path": "phishing_engine/models/content_model.joblib",
@@ -196,6 +182,20 @@
         "options": {
           "max_html_bytes": 200000,
           "tls_timeout": 10
+        }
+      },
+      {
+        "id": "domain",
+        "enabled": true,
+        "model_path": "phishing_engine/models/domain_model.joblib",
+        "label_map": {
+          "1": "phish",
+          "0": "benign"
+        },
+        "options": {
+          "data_dir": "phishing_engine/features/domain/data",
+          "geoip_city_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-City.mmdb",
+          "geoip_asn_db": "phishing_engine/data/GeoLite2-DB/GeoLite2-ASN.mmdb"
         }
       }
     ]

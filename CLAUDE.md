@@ -38,6 +38,8 @@ python -m phishing_engine.cli.train --stage url       # -> models/url_model.pkl
 python -m phishing_engine.cli.train --stage domain
 python -m phishing_engine.cli.train --stage content
 python -m phishing_engine.cli.train --stage all --model-type gradient_boosting
+#   --model-type (default random_forest) mirrors model_evaluation.ipynb: logistic_regression,
+#   decision_tree, random_forest, extra_trees, gradient_boosting, knn, xgboost, lightgbm, svm
 ```
 
 There is **no automated test suite, linter, or build config** (no pytest/pyproject/Makefile).
@@ -75,12 +77,15 @@ models expect) unless you intend to retrain.
 
 ### Stages and the decision cascade
 
-The stages form a **single-threshold cascade** (in `Pipeline.run`, `core/pipeline.py`).
+The stages form a **per-stage-threshold cascade** (in `Pipeline.run`, `core/pipeline.py`).
 They run in config order; each yields a phishing probability. A stage whose probability is
-`>= decision.threshold` is trusted to decide on its own — the run ends with that stage's
-own model verdict (`phish` if its probability is `>= 0.5` else `benign`) and the remaining
-stages are **never run** (so their live collection is skipped) — while a probability
-`< threshold` **escalates** the URL to the next stage for further examination. If no stage exits early,
+`>= its threshold` (the stage's own `threshold`, or the pipeline-wide `decision.threshold`
+default when the stage doesn't set one — so each transition can demand its own confidence,
+e.g. `0.9` for `url`, `0.8` for `content`) is trusted to decide on its own — the run ends
+with that stage's own model verdict (`phish` if its probability is `>= 0.5` else `benign`)
+and the remaining stages are **never run** (so their live collection is skipped) — while a
+probability below the stage's threshold **escalates** the URL to the next stage for further
+examination. If no stage exits early,
 the verdict comes from **aggregating every stage's probability**: `decision.fallback_aggregation`
 (`"mean"` (the default), `"max"`, or `"median"`) combines them into one score that is
 `phish` if `>= 0.5` (a fixed boundary, `FALLBACK_DECISION_BOUNDARY`) else `benign`; the
@@ -90,8 +95,9 @@ untrained), the result is `"unknown"`. The threshold and aggregation policy live
 top-level `pipeline.decision` block of the config. **Note:** the fallback only produces a
 `phish` when `threshold > 0.5` — otherwise any stage reaching the 0.5 boundary would have
 already early-exited, so the aggregate of the remaining sub-threshold probabilities is
-always below 0.5. (This cascade no longer mirrors the single-threshold *fused* sweep in
-`model_evaluation.ipynb`, which remains an offline-evaluation artifact only.)
+always below 0.5. (This cascade no longer
+mirrors the single-threshold *fused* sweep in `model_evaluation.ipynb`, which remains an
+offline-evaluation artifact only.)
 
 | Stage | `requires_raw` (training) | Fetches at predict time | Model input path |
 |-------|---------------------------|-------------------------|------------------|
@@ -114,11 +120,14 @@ locally first.
 
 ### Label handling
 
-Models trained via `cli.train` use **string labels** (`"phish"`/`"benign"`), so `classes_`
-maps directly onto the engine labels with no `label_map`. The shipped `domain_model.joblib` is a
-legacy XGBoost model trained on `0`/`1`, so its stage config carries
-`label_map: {"1": "phish", "0": "benign"}`. `ModelRunner._normalize_*` applies this map to
-both predictions and probabilities.
+Most models trained via `cli.train` fit on **string labels** (`"phish"`/`"benign"`), so
+`classes_` maps directly onto the engine labels with no `label_map`. The one exception is
+`--model-type xgboost`: XGBoost's sklearn API only accepts integer targets, so `train_stage`
+encodes `benign=0`/`phish=1` and the model's `classes_` come out as `0`/`1` — that stage's
+config must then carry `label_map: {"1": "phish", "0": "benign"}` (the encoded `train_stage`
+summary reports the exact map, and a warning is logged). The shipped `domain_model.joblib`
+is a legacy XGBoost model trained the same way, so its stage config carries that same
+`label_map`. `ModelRunner._normalize_*` applies the map to both predictions and probabilities.
 
 ### Feature alignment
 
@@ -143,9 +152,10 @@ of crashing the whole prediction.
 
 `config/pipeline.json` drives everything (schema/validation in `core/config.py`, root key
 `pipeline`). Each stage entry has `id`, `enabled`, `model_path`, optional `feature_columns`,
-`label_map`, and stage-specific `options` (timeouts, GeoIP DB paths, data dirs). The
-top-level `decision` block holds the pipeline-wide policy (`threshold`,
-`positive_label`, `negative_label`); `mongo` holds the connection
+`label_map`, an optional per-stage `threshold` (overrides `decision.threshold` for that
+stage's early-exit), and stage-specific `options` (timeouts, GeoIP DB paths, data dirs). The
+top-level `decision` block holds the pipeline-wide policy (`threshold` default,
+`positive_label`, `negative_label`, `fallback_aggregation`); `mongo` holds the connection
 (uri/database/collection/domain_collection).
 
 ### Storage schema

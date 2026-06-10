@@ -34,20 +34,21 @@ responsibilities:
 
 ### Stages (prediction)
 
-The enabled stages run in order as a single-threshold cascade. A stage whose phishing
-probability is `>= decision.threshold` is trusted to decide on its own and ends the run
+The enabled stages run in order as a per-stage-threshold cascade. A stage whose phishing
+probability is `>= its threshold` (the stage's own `threshold`, or the pipeline-wide
+`decision.threshold` default — so each transition can demand its own confidence) is trusted
+to decide on its own and ends the run
 with that stage's model verdict (`phish` if its probability is `>= 0.5` else `benign`; the
 remaining stages are skipped); a probability below the threshold escalates the URL to the
 next stage. If no stage exits early, the stages' probabilities are aggregated — `mean`
 (default), `max`, or `median` per `decision.fallback_aggregation` — and the verdict is `phish` if
-the aggregate is `>= 0.5` else `benign` (this fallback only fires `phish` when
-`threshold > 0.5`), or `unknown` if no stage scored.
+the aggregate is `>= 0.5` else `benign`, or `unknown` if no stage scored.
 
 | Stage | Input | Fetches network? |
 |-------|-------|------------------|
 | `url`     | URL string only — lexical features | **No** (never fetches the page) |
-| `domain`  | DNS / IP / RDAP / WHOIS record | Yes (DNS/RDAP) |
 | `content` | HTML + TLS certificate features | Yes (HTML + TLS, no JS) |
+| `domain`  | DNS / IP / RDAP / WHOIS record | Yes (DNS/RDAP) |
 
 ## Package layout
 
@@ -77,7 +78,7 @@ phishing_engine/
     dns.py ip.py rdap.py domain_record.py      # raw domain record collection
     web_fetch.py tls.py content.py             # raw page content (HTML + TLS)
   storage/mongo.py        # the ONLY Mongo writer + read helpers for training
-  models/                 # domain_model.joblib (shipped); url/content models trained locally
+  models/                 # domain_model.joblib/url/content models trained locally
   data/GeoLite2-DB/       # GeoLite2 City/ASN databases
 ```
 
@@ -86,10 +87,11 @@ phishing_engine/
 Driven by `config/pipeline.json` (schema in `phishing_engine/core/config.py`):
 
 - `mongo`: `uri`, `database`, `collection`.
-- `decision`: pipeline-wide policy — `threshold` (0–1), `positive_label`,
-  `negative_label`.
+- `decision`: pipeline-wide policy — `threshold` (0–1, the default early-exit bar),
+  `positive_label`, `negative_label`, `fallback_aggregation` (`mean`/`max`/`median`).
 - `stages`: ordered list (the cascade order). Each has `id`, `enabled`, `model_path`,
-  optional `feature_columns`, `label_map`, and stage-specific `options`.
+  optional `feature_columns`, `label_map`, an optional per-stage `threshold` (overrides
+  `decision.threshold` for that stage), and stage-specific `options`.
 
 A stage whose `model_path` does not exist yet runs **feature-only** (no prediction, so the
 cascade escalates past it), so the engine is usable before every model is trained.

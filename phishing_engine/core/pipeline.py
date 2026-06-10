@@ -5,12 +5,13 @@ This module defines the framework pieces shared by every stage:
   * ``Pipeline`` — runs the stages as a cascade, stopping at the first confident phish.
   * the result/context dataclasses passed between them.
 
-The pipeline is a single-threshold cascade: stages run in config order and each yields
-a phishing probability. A stage whose probability is ``>= threshold`` is trusted to decide
+The pipeline is a per-stage-threshold cascade: stages run in config order and each yields
+a phishing probability. A stage whose probability is ``>= its threshold`` (the stage's own
+``threshold``, or the pipeline-wide ``decision.threshold`` default) is trusted to decide
 on its own — the run ends with that stage's model verdict (``phish`` if its probability is
 ``>= 0.5`` else ``benign``) and the remaining stages (and their live collection) are
-skipped; a
-probability ``< threshold`` escalates the URL to the next stage for further examination.
+skipped; a probability below the stage's threshold escalates the URL to the next stage for
+further examination.
 If the cascade reaches the last stage without an early exit, the verdict comes from
 aggregating *every* stage's probability — the ``max``, ``mean``, or ``median`` of them, per
 ``decision.fallback_aggregation`` — and is ``phish`` if that aggregate is ``>= 0.5``
@@ -180,22 +181,23 @@ class BaseStage:
 
 
 class Pipeline:
-    """Prediction pipeline. Runs the enabled stages as a single-threshold cascade.
+    """Prediction pipeline. Runs the enabled stages as a per-stage-threshold cascade.
 
     Stages run in config order. Each yields a phishing probability; a stage whose
-    probability is ``>= threshold`` is trusted to decide on its own (the run ends with that
-    stage's model verdict, ``phish`` or ``benign``) and the remaining stages are never run
-    (so their live collection is skipped), while a
-    probability ``< threshold`` escalates the URL to the next stage. If no stage exits
-    early, the verdict comes from aggregating every stage's probability (``max``, ``mean``,
-    or ``median`` per ``decision.fallback_aggregation``) and comparing it to the fixed
+    probability is ``>= its threshold`` (the stage's own ``threshold`` override, else the
+    pipeline-wide ``decision.threshold``) is trusted to decide on its own (the run ends with
+    that stage's model verdict, ``phish`` or ``benign``) and the remaining stages are never
+    run (so their live collection is skipped), while a probability below the stage's
+    threshold escalates the URL to the next stage. If no stage exits early, the verdict comes
+    from aggregating every stage's probability (``max``, ``mean``, or ``median`` per
+    ``decision.fallback_aggregation``) and comparing it to the fixed
     ``FALLBACK_DECISION_BOUNDARY`` of 0.5. The pipeline never writes to MongoDB —
     collecting raw data for storage is the collectors' job; each stage collects whatever
     it needs in-memory.
     """
 
     def __init__(self, stages, decision: Optional[DecisionConfig] = None):
-        """Store the ordered stages and the (single-threshold) decision policy."""
+        """Store the ordered stages and the (per-stage-threshold) decision policy."""
         self.stages = stages
         self.decision = decision or DecisionConfig()
 
@@ -204,8 +206,9 @@ class Pipeline:
 
         Disabled stages are skipped. Each remaining stage produces ``P(positive)`` (a
         stage with no model / no probability — or one that errored — cannot decide, so the
-        cascade escalates past it). The first stage with ``P(positive) >= threshold`` is
-        trusted to decide on its own: the run ends with that stage's model verdict
+        cascade escalates past it). The first stage with ``P(positive) >= its threshold``
+        (the stage's own override, else ``decision.threshold``) is trusted to decide on its
+        own: the run ends with that stage's model verdict
         (``positive`` if ``P(positive) >= 0.5`` else ``negative``) and the later stages are
         never run; otherwise the URL is escalated. If no stage exits early, the verdict
         comes from aggregating every
@@ -218,7 +221,6 @@ class Pipeline:
 
         decision = self.decision
         positive, negative = decision.positive_label, decision.negative_label
-        threshold = decision.threshold
 
         # Every (stage_id, P(positive)) the cascade saw, in run order.
         collected: List[Tuple[str, float]] = []
@@ -235,6 +237,13 @@ class Pipeline:
                 # No usable probability (untrained model, error, ...) — escalate.
                 continue
             collected.append((stage.stage_id, p))
+            # Each transition can demand its own confidence; fall back to the
+            # pipeline-wide default when a stage doesn't set its own threshold.
+            threshold = (
+                stage.config.threshold
+                if stage.config.threshold is not None
+                else decision.threshold
+            )
             if p >= threshold:
                 # Trusted: this stage is confident enough to decide on its own, so adopt
                 # its model verdict (``positive`` if P(positive) >= 0.5 else ``negative``)

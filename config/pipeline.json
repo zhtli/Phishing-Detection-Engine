@@ -7,7 +7,7 @@
       "domain_collection": "domain_records"
     },
     "decision": {
-      "threshold": 0.8,
+      "threshold": 0.99,
       "positive_label": "phish",
       "negative_label": "benign",
       "fallback_aggregation": "mean"
@@ -16,6 +16,7 @@
       {
         "id": "url",
         "enabled": true,
+        "threshold": 0.9,
         "model_path": "phishing_engine/models/url_model.pkl",
         "feature_columns": [
           "domain_digit_count",
@@ -64,6 +65,7 @@
       {
         "id": "content",
         "enabled": true,
+        "threshold": 0.8,
         "model_path": "phishing_engine/models/content_model.joblib",
         "feature_columns": [
           "html_num_of_words",

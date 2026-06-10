@@ -14,12 +14,14 @@ from pydantic import BaseModel, Field
 
 
 class DecisionConfig(BaseModel):
-    """Pipeline-wide single-threshold cascade policy.
+    """Pipeline-wide per-stage-threshold cascade policy.
 
     Enabled stages run in order. A stage whose phishing probability is ``>= threshold`` is
     trusted to decide on its own: the cascade ends with that stage's model verdict
     (``positive_label`` if its probability is ``>= 0.5`` else ``negative_label``), the
-    remaining stages skipped; a probability below ``threshold`` escalates to the next. If no
+    remaining stages skipped; a probability below ``threshold`` escalates to the next.
+    ``threshold`` is the pipeline-wide default; a stage may set its own ``threshold`` to
+    demand a different confidence for its transition. If no
     stage exits early, the verdict comes from aggregating *every* stage's probability:
     ``fallback_aggregation`` (``"mean"`` (default), ``"max"``, or ``"median"``) combines them into one score,
     which is ``positive_label`` if ``>= 0.5`` else ``negative_label``. If no stage produced
@@ -44,6 +46,11 @@ class StageConfig(BaseModel):
     feature-only). ``feature_columns`` pins the model's input ordering, ``label_map``
     remaps raw model classes to engine labels, and ``options`` holds stage-specific
     settings (timeouts, GeoIP paths, data dirs, ...).
+
+    ``threshold`` overrides the pipeline-wide ``decision.threshold`` for *this* stage's
+    early-exit decision, so each transition can demand its own confidence (e.g. ``0.9``
+    for the cheap ``url`` stage, ``0.8`` for ``content``). ``None`` (the default) falls
+    back to ``decision.threshold``.
     """
 
     id: str
@@ -52,6 +59,7 @@ class StageConfig(BaseModel):
     feature_columns: Optional[List[str]] = None
     label_map: Dict[str, str] = Field(default_factory=dict)
     options: Dict[str, Any] = Field(default_factory=dict)
+    threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class MongoConfig(BaseModel):

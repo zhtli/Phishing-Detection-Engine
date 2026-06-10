@@ -58,5 +58,5 @@ def result_to_dict(result: PipelineResult) -> Dict[str, Any]:
         "label": result.label,
         "confidence": sanitize_value(result.confidence),
         "probabilities": sanitize_value(result.probabilities),
-        "stages": {key: stage_result_to_dict(value) for key, value in result.stages.items()},
+        #"stages": {key: stage_result_to_dict(value) for key, value in result.stages.items()},
     }

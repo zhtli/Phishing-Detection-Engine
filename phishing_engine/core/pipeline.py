@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -60,6 +61,8 @@ class StageResult:
     missing_features: List[str]
     extra_features: List[str]
     error: Optional[str] = None
+    # Wall-clock time for this stage's collect → extract → predict, in milliseconds.
+    elapsed_ms: Optional[float] = None
 
 
 @dataclass
@@ -155,6 +158,7 @@ class BaseStage:
         prediction: Optional[PredictionOutput] = None
         error: Optional[str] = None
 
+        started = time.perf_counter()
         try:
             artifacts = self.collect(context)
             features = self.extract_features(context, artifacts)
@@ -165,6 +169,7 @@ class BaseStage:
                 "stage %r failed for url %r", self.stage_id, context.url
             )
             error = f"{type(exc).__name__}: {exc}"
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
 
         return StageResult(
             stage_id=self.stage_id,
@@ -177,6 +182,7 @@ class BaseStage:
             missing_features=prediction.missing_features if prediction else [],
             extra_features=prediction.extra_features if prediction else [],
             error=error,
+            elapsed_ms=elapsed_ms,
         )
 
 

@@ -27,6 +27,7 @@ python -m phishing_engine.cli.predict --url "http://example.com" --config config
 # Serve the same pipeline over HTTP (config path from $PHISHING_ENGINE_CONFIG)
 uvicorn phishing_engine.api:app --host 0.0.0.0 --port 8000 --workers 1
 #   GET /health   POST /predict  body: {"url": "https://..."}
+#   also serves the browser web UI at /  (http://localhost:8000/)
 
 # Collect (the ONLY Mongo writers; each also collects raw domain record + content inline)
 python -m phishing_engine.cli.collect phishtank --limit 2000
@@ -201,9 +202,10 @@ independent; a failure on one is logged and skipped.
 
 ```
 phishing_engine/
-  api.py                FastAPI /predict + /health (lazy-built, reused pipeline)
+  api.py                FastAPI /predict + /health (lazy-built, reused pipeline); also serves webui/ at /
+  webui/                browser demo UI (static HTML/CSS/JS, React+Babel via CDN); engine.js -> /predict
   cli/                  predict.py, train.py, collect.py
-  core/                 config, pipeline+decision cascade, model_runner, training, registry, urls, serialization
+  core/                 config, pipeline+decision cascade, model_runner, training, registry, urls, serialization, explain
   stages/               url / domain / content (BaseStage lives in core/pipeline.py)
   features/             by-stage packages: url/ domain/ content/ (each w/ extractor.py adapter) + common/
   collectors/           sources/ (phishtank, tranco, search); dns/ip/rdap/domain_record; web_fetch/tls/content
@@ -211,6 +213,12 @@ phishing_engine/
   models/               domain_model.joblib (shipped); url/content trained locally
   data/GeoLite2-DB/     GeoLite2 City/ASN databases
 ```
+
+The web UI (`webui/`) is a static single-page prototype served from the same origin by
+`api.py` (StaticFiles mount, no build step). Its `engine.js` calls `POST /predict` and the
+API answers with a rich, UI-shaped payload from `serialization.result_to_api_dict` (per-stage
+probabilities/thresholds/latency, signals from `core/explain.py`, and the raw collected
+evidence). The CLI's `result_to_dict` stays the minimal verdict; the two are separate.
 
 Most directories have their own `README.md`; the root `README.md` has the end-to-end story.
 The legacy `url_analyzer/` and `domain_analyzer/` directories are historical reference only

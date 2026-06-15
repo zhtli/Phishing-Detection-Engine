@@ -54,7 +54,8 @@ the aggregate is `>= 0.5` else `benign`, or `unknown` if no stage scored.
 
 ```
 phishing_engine/
-  api.py                  # FastAPI /predict + /health
+  api.py                  # FastAPI /predict + /health (also serves the web UI at /)
+  webui/                  # browser demo UI served at / (engine.js -> /predict)
   cli/
     predict.py            # prediction CLI
     train.py              # training CLI
@@ -209,6 +210,24 @@ uvicorn phishing_engine.api:app --host 0.0.0.0 --port 8000 --workers 1
 #   GET  /health
 #   POST /predict   body: {"url": "https://..."}
 ```
+
+## Web UI
+
+A single-page browser demo ships in [`phishing_engine/webui/`](phishing_engine/webui/) and
+is served by the API at `/` from the same origin — no separate build step or CORS setup.
+Start the service and open it:
+
+```bash
+uvicorn phishing_engine.api:app --host 0.0.0.0 --port 8000 --workers 1
+# then open http://localhost:8000/
+```
+
+Paste a URL and it calls `POST /predict`, then visualizes the run: the per-stage phishing
+probabilities and thresholds, the decision mode (early-exit vs. `mean`/`max`/`median`
+aggregation), the driving signals, and the raw evidence each stage collected (parsed URL,
+WHOIS/DNS/hosting record, TLS certificate, and the page HTML/DOM on demand). The UI reads
+the decision policy from the live response, so it reflects whatever `config/pipeline.json`
+specifies. See [`phishing_engine/webui/README.md`](phishing_engine/webui/README.md).
 
 ## MongoDB
 

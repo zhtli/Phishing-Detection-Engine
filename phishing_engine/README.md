@@ -14,7 +14,8 @@ pipeline**, a **training pipeline**, and a set of **collectors**. The repository
 | [`cli/`](cli/README.md) | The three command-line tools: `predict`, `train`, `collect`. |
 | [`models/`](models/README.md) | Trained model artifacts (`*.joblib` / `*.pkl`). |
 | [`data/`](data/README.md) | Static data assets (GeoLite2 databases). |
-| `api.py` | FastAPI service exposing `/predict` and `/health`. |
+| [`webui/`](webui/README.md) | Browser demo UI served by `api.py` at `/` (its `engine.js` calls `/predict`). |
+| `api.py` | FastAPI service exposing `/predict` and `/health`, and serving `webui/` at `/`. |
 
 ### Data flow in one line
 Collectors write raw data to Mongo → the training pipeline reads it and writes models to

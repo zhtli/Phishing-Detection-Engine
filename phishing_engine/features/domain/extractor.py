@@ -5,7 +5,7 @@ from typing import Iterable, Optional
 
 from . import pipeline
 
-DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "data"
+DEFAULT_DATA_DIR = Path(__file__).resolve().parent / "ngram_tables"
 
 
 class DomainFeatureExtractor:

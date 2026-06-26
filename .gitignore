@@ -225,3 +225,5 @@ models/
 # Notebook feature cache + evaluation outputs
 feature_cache/
 eval_results/
+
+CLAUDE.md

@@ -10,11 +10,11 @@ uvicorn phishing_engine.api:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 Paste a URL → the UI calls `POST /predict` and visualizes the run: the 3-stage cascade with
-each stage's phishing probability, threshold and latency; the decision (early-exit vs.
-`mean`/`max`/`median` aggregation); the driving signals; and the raw evidence each stage
-collected (parsed URL, WHOIS/DNS/hosting record, TLS certificate, and the page HTML/DOM on
-demand). The decision policy (thresholds, labels, aggregation) is read from the live
-response, so the UI reflects whatever `config/pipeline.json` specifies.
+each stage's phishing probability, deferral band `[0.5−δ, 0.5+δ]` and latency; the decision
+(band early-exit vs. `mean`/`max`/`median` aggregation); the driving signals; and the raw
+evidence each stage collected (parsed URL, WHOIS/DNS/hosting record, TLS certificate, and the
+page HTML/DOM on demand). The decision policy (margins, labels, aggregation) is read from the
+live response, so the UI reflects whatever `config/pipeline.json` specifies.
 
 ## How it's wired
 

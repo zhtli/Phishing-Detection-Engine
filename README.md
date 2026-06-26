@@ -29,20 +29,21 @@ responsibilities:
   with the same extractors used at prediction time, trains a classifier per stage, and
   writes the model to disk. It does not write to MongoDB.
 - The **prediction pipeline** scores a single URL through a staged cascade, stopping at
-  the first stage confident enough to flag it. Each stage collects whatever it needs
-  in-memory; the pipeline never writes to MongoDB.
+  the first stage confident enough to decide either way (phish or benign). Each stage
+  collects whatever it needs in-memory; the pipeline never writes to MongoDB.
 
 ### Stages (prediction)
 
-The enabled stages run in order as a per-stage-threshold cascade. A stage whose phishing
-probability is `>= its threshold` (the stage's own `threshold`, or the pipeline-wide
-`decision.threshold` default — so each transition can demand its own confidence) is trusted
-to decide on its own and ends the run
-with that stage's model verdict (`phish` if its probability is `>= 0.5` else `benign`; the
-remaining stages are skipped); a probability below the threshold escalates the URL to the
-next stage. If no stage exits early, the stages' probabilities are aggregated — `mean`
-(default), `max`, or `median` per `decision.fallback_aggregation` — and the verdict is `phish` if
-the aggregate is `>= 0.5` else `benign`, or `unknown` if no stage scored.
+The enabled stages run in order as a two-sided per-stage deferral-band cascade. Each stage
+has a symmetric margin `δ` (its own `margin`, or the pipeline-wide `decision.margin` default —
+so each transition can demand its own confidence) defining a band `[0.5 − δ, 0.5 + δ]`. A
+stage whose phishing probability lands **outside** its band is confident either way and
+trusted to decide on its own, ending the run with that stage's model verdict (`phish` if its
+probability is `>= 0.5 + δ` else `benign`; the remaining stages are skipped); a probability
+**inside** the band is uncertain and escalates the URL to the next stage. If no stage exits
+early, the stages' probabilities are aggregated — `mean` (default), `max`, or `median` per
+`decision.fallback_aggregation` — and the verdict is `phish` if the aggregate is `>= 0.5`
+else `benign`, or `unknown` if no stage scored.
 
 | Stage | Input | Fetches network? |
 |-------|-------|------------------|
@@ -88,11 +89,11 @@ phishing_engine/
 Driven by `config/pipeline.json` (schema in `phishing_engine/core/config.py`):
 
 - `mongo`: `uri`, `database`, `collection`.
-- `decision`: pipeline-wide policy — `threshold` (0–1, the default early-exit bar),
+- `decision`: pipeline-wide policy — `margin` (0–0.5, the default deferral-band half-width δ),
   `positive_label`, `negative_label`, `fallback_aggregation` (`mean`/`max`/`median`).
 - `stages`: ordered list (the cascade order). Each has `id`, `enabled`, `model_path`,
-  optional `feature_columns`, `label_map`, an optional per-stage `threshold` (overrides
-  `decision.threshold` for that stage), and stage-specific `options`.
+  optional `feature_columns`, `label_map`, an optional per-stage `margin` (overrides
+  `decision.margin` for that stage's deferral band), and stage-specific `options`.
 
 A stage whose `model_path` does not exist yet runs **feature-only** (no prediction, so the
 cascade escalates past it), so the engine is usable before every model is trained.
@@ -223,7 +224,7 @@ uvicorn phishing_engine.api:app --host 0.0.0.0 --port 8000 --workers 1
 ```
 
 Paste a URL and it calls `POST /predict`, then visualizes the run: the per-stage phishing
-probabilities and thresholds, the decision mode (early-exit vs. `mean`/`max`/`median`
+probabilities and deferral bands, the decision mode (early-exit vs. `mean`/`max`/`median`
 aggregation), the driving signals, and the raw evidence each stage collected (parsed URL,
 WHOIS/DNS/hosting record, TLS certificate, and the page HTML/DOM on demand). The UI reads
 the decision policy from the live response, so it reflects whatever `config/pipeline.json`

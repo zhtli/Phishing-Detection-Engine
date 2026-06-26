@@ -6,7 +6,7 @@ here knows about a *specific* stage; concrete stages live in [`../stages/`](../s
 | File | Purpose |
 |------|---------|
 | `config.py` | Pydantic models for `config/pipeline.json` (`AppConfig` → `PipelineConfig` → `StageConfig` + `DecisionConfig` + `MongoConfig`) and `load_config()`. |
-| `pipeline.py` | The prediction engine: `BaseStage` (the collect→extract→predict contract), `Pipeline.run()` (runs the enabled stages as a per-stage-threshold cascade, stopping at the first confident phish via `Pipeline._build_result`), and the `StageResult` / `PipelineContext` / `PipelineResult` dataclasses. **Never writes to Mongo.** |
+| `pipeline.py` | The prediction engine: `BaseStage` (the collect→extract→predict contract), `Pipeline.run()` (runs the enabled stages as a two-sided per-stage deferral-band cascade, stopping at the first stage confident outside its band via `Pipeline._build_result`), and the `StageResult` / `PipelineContext` / `PipelineResult` dataclasses. **Never writes to Mongo.** |
 | `model_runner.py` | `ModelRunner` — loads a model (`.joblib`/`.pkl`), aligns a feature dict/DataFrame to the model's columns, runs predict/predict_proba, and maps raw class labels to engine labels (`phish`/`benign`). `PredictionOutput` holds the result. |
 | `training.py` | The training pipeline: reads labeled docs from Mongo, runs a stage's feature extractor over each, fits a classifier (`random_forest` / `gradient_boosting`), and dumps it to disk. `train_stage()` is the entry point. |
 | `registry.py` | Stage registry. Stages register themselves on import; `build_stages()` instantiates them and attaches a `ModelRunner` when the model file exists (missing model ⇒ feature-only). |
@@ -14,13 +14,13 @@ here knows about a *specific* stage; concrete stages live in [`../stages/`](../s
 | `serialization.py` | `result_to_dict()` — turn pipeline results into JSON-safe dicts for the CLI/API. |
 
 ### How a prediction flows
-`Pipeline.run(url)` runs the enabled stages in order as a per-stage-threshold cascade. For
-each stage: `collect` → `extract_features` → `predict`. A stage whose phishing probability
-is `>= its threshold` (the stage's own `threshold`, or the pipeline-wide `decision.threshold`
-default) ends the run with that stage's own model verdict (`phish` if
-its probability is `>= 0.5` else `benign`) and the remaining stages are skipped; a
-probability below the threshold escalates the URL to the next stage. If no stage exits
-early, every stage's probability is aggregated — `mean` (default), `max`, or `median` per
-`decision.fallback_aggregation` — and the verdict is `phish` if that aggregate is `>= 0.5`
-else `benign`. If no stage
-produced a probability (e.g. all models untrained) the result is `"unknown"`.
+`Pipeline.run(url)` runs the enabled stages in order as a two-sided per-stage deferral-band
+cascade. For each stage: `collect` → `extract_features` → `predict`. Each stage has a margin
+`δ` (its own `margin`, or the pipeline-wide `decision.margin` default) defining a band
+`[0.5 − δ, 0.5 + δ]`. A stage whose phishing probability lands **outside** its band ends the
+run with that stage's own model verdict (`phish` if its probability is `>= 0.5 + δ` else
+`benign`) and the remaining stages are skipped; a probability **inside** the band escalates
+the URL to the next stage. If no stage exits early, every stage's probability is aggregated —
+`mean` (default), `max`, or `median` per `decision.fallback_aggregation` — and the verdict is
+`phish` if that aggregate is `>= 0.5` else `benign`. If no stage produced a probability (e.g.
+all models untrained) the result is `"unknown"`.

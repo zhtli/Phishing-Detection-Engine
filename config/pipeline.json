@@ -7,7 +7,7 @@
       "domain_collection": "domain_records"
     },
     "decision": {
-      "threshold": 0.99,
+      "margin": 0.4,
       "positive_label": "phish",
       "negative_label": "benign",
       "fallback_aggregation": "mean"
@@ -16,7 +16,7 @@
       {
         "id": "url",
         "enabled": true,
-        "threshold": 0.9,
+        "margin": 0.49,
         "model_path": "phishing_engine/models/url_model.pkl",
         "feature_columns": [
           "domain_digit_count",
@@ -65,7 +65,7 @@
       {
         "id": "content",
         "enabled": true,
-        "threshold": 0.8,
+        "margin": 0.28,
         "model_path": "phishing_engine/models/content_model.joblib",
         "feature_columns": [
           "html_num_of_words",
@@ -188,6 +188,7 @@
       },
       {
         "id": "domain",
+        "margin": 0.10,
         "enabled": true,
         "model_path": "phishing_engine/models/domain_model.joblib",
         "label_map": {

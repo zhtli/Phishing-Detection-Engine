@@ -14,25 +14,26 @@ from pydantic import BaseModel, Field
 
 
 class DecisionConfig(BaseModel):
-    """Pipeline-wide per-stage-threshold cascade policy.
+    """Pipeline-wide two-sided deferral-band cascade policy.
 
-    Enabled stages run in order. A stage whose phishing probability is ``>= threshold`` is
-    trusted to decide on its own: the cascade ends with that stage's model verdict
-    (``positive_label`` if its probability is ``>= 0.5`` else ``negative_label``), the
-    remaining stages skipped; a probability below ``threshold`` escalates to the next.
-    ``threshold`` is the pipeline-wide default; a stage may set its own ``threshold`` to
-    demand a different confidence for its transition. If no
-    stage exits early, the verdict comes from aggregating *every* stage's probability:
-    ``fallback_aggregation`` (``"mean"`` (default), ``"max"``, or ``"median"``) combines them into one score,
-    which is ``positive_label`` if ``>= 0.5`` else ``negative_label``. If no stage produced
-    a probability (e.g. all models are untrained), the verdict is ``"unknown"``.
+    Enabled stages run in order. Each stage carries a symmetric **margin** ``δ`` defining a
+    deferral band ``[0.5 - δ, 0.5 + δ]`` around the 0.5 boundary. A stage whose phishing
+    probability ``p`` lands **outside** its band is confident enough to decide on its own and
+    the cascade ends here with that stage's model verdict (``positive_label`` if
+    ``p >= 0.5 + δ`` else ``negative_label``), the remaining stages skipped; a ``p`` **inside**
+    the band is uncertain and escalates to the next stage. ``margin`` is the pipeline-wide
+    default; a stage may set its own ``margin`` to demand a different confidence for its
+    transition (a smaller δ exits more readily). If no stage exits early, the verdict comes
+    from aggregating *every* stage's probability: ``fallback_aggregation`` (``"mean"``
+    (default), ``"max"``, or ``"median"``) combines them into one score, which is
+    ``positive_label`` if ``>= 0.5`` else ``negative_label``. If no stage produced a
+    probability (e.g. all models are untrained), the verdict is ``"unknown"``.
 
-    Note: the fallback only matters when ``threshold > 0.5`` — otherwise any stage at or
-    above the 0.5 boundary would already have early-exited as ``positive_label``, so the
-    aggregate of the remaining (sub-threshold) probabilities is always below 0.5.
+    ``δ = 0.5`` makes the band ``[0, 1]`` so every stage escalates and the verdict always comes
+    from the aggregate; ``δ = 0`` makes the first stage decide every URL.
     """
 
-    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    margin: float = Field(default=0.5, ge=0.0, le=0.5)
     positive_label: str = "phish"
     negative_label: str = "benign"
     # How to combine all stages' probabilities when the cascade ends with no early exit.
@@ -47,10 +48,10 @@ class StageConfig(BaseModel):
     remaps raw model classes to engine labels, and ``options`` holds stage-specific
     settings (timeouts, GeoIP paths, data dirs, ...).
 
-    ``threshold`` overrides the pipeline-wide ``decision.threshold`` for *this* stage's
-    early-exit decision, so each transition can demand its own confidence (e.g. ``0.9``
-    for the cheap ``url`` stage, ``0.8`` for ``content``). ``None`` (the default) falls
-    back to ``decision.threshold``.
+    ``margin`` overrides the pipeline-wide ``decision.margin`` for *this* stage's deferral
+    band, so each transition can demand its own confidence (e.g. a tight ``0.3`` for the cheap
+    ``url`` stage, a wider ``0.45`` for ``content``). ``None`` (the default) falls back to
+    ``decision.margin``.
     """
 
     id: str
@@ -59,7 +60,7 @@ class StageConfig(BaseModel):
     feature_columns: Optional[List[str]] = None
     label_map: Dict[str, str] = Field(default_factory=dict)
     options: Dict[str, Any] = Field(default_factory=dict)
-    threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    margin: Optional[float] = Field(default=None, ge=0.0, le=0.5)
 
 
 class MongoConfig(BaseModel):

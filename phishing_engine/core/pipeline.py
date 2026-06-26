@@ -2,15 +2,16 @@
 
 This module defines the framework pieces shared by every stage:
   * ``BaseStage`` — the collect → extract → predict contract each stage implements.
-  * ``Pipeline`` — runs the stages as a cascade, stopping at the first confident phish.
+  * ``Pipeline`` — runs the stages as a cascade, stopping at the first confident stage.
   * the result/context dataclasses passed between them.
 
-The pipeline is a per-stage-threshold cascade: stages run in config order and each yields
-a phishing probability. A stage whose probability is ``>= its threshold`` (the stage's own
-``threshold``, or the pipeline-wide ``decision.threshold`` default) is trusted to decide
-on its own — the run ends with that stage's model verdict (``phish`` if its probability is
-``>= 0.5`` else ``benign``) and the remaining stages (and their live collection) are
-skipped; a probability below the stage's threshold escalates the URL to the next stage for
+The pipeline is a two-sided per-stage deferral-band cascade: stages run in config order and
+each yields a phishing probability ``p``. Each stage has a symmetric margin ``δ`` (its own
+``margin``, or the pipeline-wide ``decision.margin`` default) defining a band
+``[0.5 - δ, 0.5 + δ]``. A stage whose ``p`` lands **outside** its band is confident enough to
+decide on its own — the run ends with that stage's model verdict (``phish`` if
+``p >= 0.5 + δ`` else ``benign``) and the remaining stages (and their live collection) are
+skipped; a ``p`` **inside** the band is uncertain and escalates the URL to the next stage for
 further examination.
 If the cascade reaches the last stage without an early exit, the verdict comes from
 aggregating *every* stage's probability — the ``max``, ``mean``, or ``median`` of them, per
@@ -34,8 +35,8 @@ from phishing_engine.core.urls import extract_domain, normalize_url
 
 logger = logging.getLogger(__name__)
 
-# The fixed 0.5 boundary the aggregated fallback score is compared against (independent
-# of the cascade's early-exit ``threshold``, which is normally set higher).
+# The fixed 0.5 boundary the aggregated fallback score is compared against. It also serves as
+# the centre of every stage's deferral band ([0.5 - margin, 0.5 + margin]).
 FALLBACK_DECISION_BOUNDARY = 0.5
 
 
@@ -46,9 +47,9 @@ class StageResult:
     Captures the model output (label/probabilities/confidence), the computed
     ``features`` and intermediate ``artifacts``, any feature-alignment gaps
     (``missing_features``/``extra_features``), and the per-stage ``decision`` (set by
-    the pipeline from this stage's phishing probability vs. the threshold: ``>= threshold``
-    ends the cascade here with this stage's own model verdict, ``< threshold`` escalates to
-    the next stage).
+    the pipeline from this stage's phishing probability vs. its deferral band: a probability
+    outside the band ends the cascade here with this stage's own model verdict, one inside
+    the band escalates to the next stage with ``decision`` left ``None``).
     """
 
     stage_id: str
@@ -187,23 +188,23 @@ class BaseStage:
 
 
 class Pipeline:
-    """Prediction pipeline. Runs the enabled stages as a per-stage-threshold cascade.
+    """Prediction pipeline. Runs the enabled stages as a two-sided deferral-band cascade.
 
-    Stages run in config order. Each yields a phishing probability; a stage whose
-    probability is ``>= its threshold`` (the stage's own ``threshold`` override, else the
-    pipeline-wide ``decision.threshold``) is trusted to decide on its own (the run ends with
-    that stage's model verdict, ``phish`` or ``benign``) and the remaining stages are never
-    run (so their live collection is skipped), while a probability below the stage's
-    threshold escalates the URL to the next stage. If no stage exits early, the verdict comes
-    from aggregating every stage's probability (``max``, ``mean``, or ``median`` per
-    ``decision.fallback_aggregation``) and comparing it to the fixed
-    ``FALLBACK_DECISION_BOUNDARY`` of 0.5. The pipeline never writes to MongoDB —
-    collecting raw data for storage is the collectors' job; each stage collects whatever
-    it needs in-memory.
+    Stages run in config order. Each yields a phishing probability ``p`` and has a margin
+    ``δ`` (its own ``margin`` override, else the pipeline-wide ``decision.margin``) defining a
+    band ``[0.5 - δ, 0.5 + δ]``. A stage whose ``p`` is **outside** its band is trusted to
+    decide on its own (the run ends with that stage's model verdict, ``phish`` if
+    ``p >= 0.5 + δ`` else ``benign``) and the remaining stages are never run (so their live
+    collection is skipped), while a ``p`` **inside** the band escalates the URL to the next
+    stage. If no stage exits early, the verdict comes from aggregating every stage's
+    probability (``max``, ``mean``, or ``median`` per ``decision.fallback_aggregation``) and
+    comparing it to the fixed ``FALLBACK_DECISION_BOUNDARY`` of 0.5. The pipeline never writes
+    to MongoDB — collecting raw data for storage is the collectors' job; each stage collects
+    whatever it needs in-memory.
     """
 
     def __init__(self, stages, decision: Optional[DecisionConfig] = None):
-        """Store the ordered stages and the (per-stage-threshold) decision policy."""
+        """Store the ordered stages and the (deferral-band) decision policy."""
         self.stages = stages
         self.decision = decision or DecisionConfig()
 
@@ -212,14 +213,14 @@ class Pipeline:
 
         Disabled stages are skipped. Each remaining stage produces ``P(positive)`` (a
         stage with no model / no probability — or one that errored — cannot decide, so the
-        cascade escalates past it). The first stage with ``P(positive) >= its threshold``
-        (the stage's own override, else ``decision.threshold``) is trusted to decide on its
-        own: the run ends with that stage's model verdict
-        (``positive`` if ``P(positive) >= 0.5`` else ``negative``) and the later stages are
-        never run; otherwise the URL is escalated. If no stage exits early, the verdict
-        comes from aggregating every
-        stage's probability (``max``, ``mean``, or ``median``) against ``FALLBACK_DECISION_BOUNDARY``,
-        or is ``"unknown"`` if no stage produced a probability.
+        cascade escalates past it). The first stage whose ``P(positive)`` falls outside its
+        deferral band ``[0.5 - δ, 0.5 + δ]`` (``δ`` = the stage's own ``margin`` override,
+        else ``decision.margin``) is trusted to decide on its own: the run ends with that
+        stage's model verdict (``positive`` if ``P(positive) >= 0.5`` else ``negative``) and
+        the later stages are never run; a probability inside the band escalates. If no stage
+        exits early, the verdict comes from aggregating every stage's probability (``max``,
+        ``mean``, or ``median``) against ``FALLBACK_DECISION_BOUNDARY``, or is ``"unknown"``
+        if no stage produced a probability.
         """
         normalized = normalize_url(url)
         domain = extract_domain(normalized)
@@ -243,22 +244,25 @@ class Pipeline:
                 # No usable probability (untrained model, error, ...) — escalate.
                 continue
             collected.append((stage.stage_id, p))
-            # Each transition can demand its own confidence; fall back to the
-            # pipeline-wide default when a stage doesn't set its own threshold.
-            threshold = (
-                stage.config.threshold
-                if stage.config.threshold is not None
-                else decision.threshold
+            # Each transition can demand its own confidence; fall back to the pipeline-wide
+            # default when a stage doesn't set its own margin. The deferral band is
+            # [0.5 - margin, 0.5 + margin] around the FALLBACK_DECISION_BOUNDARY.
+            margin = (
+                stage.config.margin
+                if stage.config.margin is not None
+                else decision.margin
             )
-            if p >= threshold:
-                # Trusted: this stage is confident enough to decide on its own, so adopt
-                # its model verdict (``positive`` if P(positive) >= 0.5 else ``negative``)
-                # and skip the remaining stages.
+            low = FALLBACK_DECISION_BOUNDARY - margin
+            high = FALLBACK_DECISION_BOUNDARY + margin
+            if p <= low or p >= high:
+                # Outside the band: confident either way, so this stage decides on its own —
+                # adopt its model verdict (``positive`` if P(positive) >= 0.5 else
+                # ``negative``) and skip the remaining stages.
                 result.decision = positive if p >= FALLBACK_DECISION_BOUNDARY else negative
                 early_exit = (stage.stage_id, p)
                 break
-            # Below threshold: not trusted on its own — escalate to the next stage.
-            result.decision = negative
+            # Inside the band: uncertain — escalate to the next stage (no per-stage verdict).
+            result.decision = None
 
         return self._build_result(context, collected, early_exit)
 
@@ -288,11 +292,12 @@ class Pipeline:
     ) -> PipelineResult:
         """Turn the cascade outcome into the final ``PipelineResult``.
 
-        An ``early_exit`` (a stage at/above ``threshold``) adopts that stage's own model
-        verdict — ``positive`` if its ``P(positive) >= FALLBACK_DECISION_BOUNDARY`` else
-        ``negative``. Otherwise the collected probabilities are aggregated and compared to
-        the fixed ``FALLBACK_DECISION_BOUNDARY``. With nothing collected the verdict is
-        ``"unknown"``.
+        An ``early_exit`` (a stage whose probability fell outside its deferral band) adopts
+        that stage's own model verdict — ``positive`` if its
+        ``P(positive) >= FALLBACK_DECISION_BOUNDARY`` else ``negative`` (so a below-band
+        probability becomes a ``negative`` exit). Otherwise the collected probabilities are
+        aggregated and compared to the fixed ``FALLBACK_DECISION_BOUNDARY``. With nothing
+        collected the verdict is ``"unknown"``.
         """
         positive, negative = self.decision.positive_label, self.decision.negative_label
 

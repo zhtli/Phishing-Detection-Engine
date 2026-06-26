@@ -1,3 +1,6 @@
+# Portions of this file are derived from DomainRadar
+# (https://github.com/nesfit/domainradar), Copyright (c) 2024 FIT BUT, FIT CTU,
+# licensed under BSD-3-Clause. See THIRD_PARTY_NOTICES at the repository root.
 """extractor.py: The feature extraction process implementation.
 Provides the extract_features function that takes raw data, passes it through the configured transformations and returns
  a DataFrame of feature vectors. The list of transformations is initialized from the configuration.

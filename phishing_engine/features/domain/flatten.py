@@ -1,3 +1,6 @@
+# Portions of this file are derived from DomainRadar
+# (https://github.com/nesfit/domainradar), Copyright (c) 2024 FIT BUT, FIT CTU,
+# licensed under BSD-3-Clause. See THIRD_PARTY_NOTICES at the repository root.
 """flatten.py: Reshapes a raw domain record (the nested shape produced by
 ``collectors/domain_record.py``) into the flat, one-column-per-field layout that the
 DataFrame transformations consume. This is the first step of the extraction pipeline,

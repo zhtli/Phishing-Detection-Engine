@@ -1,3 +1,6 @@
+# Portions of this file are derived from DomainRadar
+# (https://github.com/nesfit/domainradar), Copyright (c) 2024 FIT BUT, FIT CTU,
+# licensed under BSD-3-Clause. See THIRD_PARTY_NOTICES at the repository root.
 """base_transformation.py: Defines the base class for feature extraction transformations."""
 __author__ = "Ondřej Ondryáš <xondry02@vut.cz>"
 

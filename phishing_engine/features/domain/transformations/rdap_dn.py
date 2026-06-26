@@ -1,3 +1,6 @@
+# Portions of this file are derived from DomainRadar
+# (https://github.com/nesfit/domainradar), Copyright (c) 2024 FIT BUT, FIT CTU,
+# licensed under BSD-3-Clause. See THIRD_PARTY_NOTICES at the repository root.
 """rdap_dn.py: Feature extraction transformations for RDAP domain data."""
 __authors__ = [
     "Ondřej Ondryáš <xondry02@vut.cz>",

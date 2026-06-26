@@ -2,8 +2,9 @@
 
 ``result_to_dict`` is the minimal verdict used by the predict CLI. ``result_to_api_dict``
 is the richer, UI-shaped payload the HTTP API serves: it walks the cascade and, per stage,
-reports the real probability, threshold, latency, run/decision flags, human-readable signals
-and the live-collected evidence (WHOIS / DNS / page facts) — everything the demo UI renders.
+reports the real probability, deferral band, latency, run/decision flags, human-readable
+signals and the live-collected evidence (WHOIS / DNS / page facts) — everything the demo UI
+renders.
 """
 from __future__ import annotations
 
@@ -96,18 +97,18 @@ def result_to_dict(result: PipelineResult) -> Dict[str, Any]:
 _VERDICT_MAP = {"phish": "phishing", "benign": "legitimate"}
 
 
-def _stage_threshold(stage, decision) -> float:
-    """The stage's own early-exit threshold, or the pipeline-wide default."""
-    return stage.config.threshold if stage.config.threshold is not None else decision.threshold
+def _stage_margin(stage, decision) -> float:
+    """The stage's own deferral margin δ, or the pipeline-wide default."""
+    return stage.config.margin if stage.config.margin is not None else decision.margin
 
 
 def result_to_api_dict(pipeline: Pipeline, result: PipelineResult, url: str) -> Dict[str, Any]:
     """Assemble the rich, UI-shaped payload from a finished cascade run.
 
-    Needs the ``pipeline`` (for per-stage thresholds, cascade order and which stages have a
+    Needs the ``pipeline`` (for per-stage deferral bands, cascade order and which stages have a
     loaded model) alongside the ``result`` (``result.stages`` holds only the stages that ran).
     Produces the cascade-level verdict/decision metadata, a per-stage card list (probability,
-    threshold, latency, run/decision flags, signals) and the merged ``extracted`` evidence.
+    band, latency, run/decision flags, signals) and the merged ``extracted`` evidence.
     """
     decision = pipeline.decision
     positive, negative = decision.positive_label, decision.negative_label
@@ -123,8 +124,8 @@ def result_to_api_dict(pipeline: Pipeline, result: PipelineResult, url: str) -> 
     verdict = _VERDICT_MAP.get(result.decision, "unknown")
 
     # Locate the deciding stage (1-based) and classify the decision mode: a stage whose own
-    # probability cleared its threshold is an early-exit; otherwise the verdict came from the
-    # aggregated fallback (or there was no probability at all → "unknown").
+    # probability landed outside its deferral band is an early-exit; otherwise the verdict came
+    # from the aggregated fallback (or there was no probability at all → "unknown").
     deciding_idx: Optional[int] = None
     if result.stage_id is not None:
         for i, stage in enumerate(ordered):
@@ -137,8 +138,9 @@ def result_to_api_dict(pipeline: Pipeline, result: PipelineResult, url: str) -> 
         deciding_stage = ordered[deciding_idx - 1]
         deciding_sr = result.stages.get(result.stage_id)
         p = deciding_sr.probabilities.get(positive) if deciding_sr and deciding_sr.probabilities else None
-        threshold = _stage_threshold(deciding_stage, decision)
-        decision_mode = "early-exit" if (p is not None and p >= threshold) else "aggregation"
+        margin = _stage_margin(deciding_stage, decision)
+        low, high = FALLBACK_DECISION_BOUNDARY - margin, FALLBACK_DECISION_BOUNDARY + margin
+        decision_mode = "early-exit" if (p is not None and (p <= low or p >= high)) else "aggregation"
 
     aggregate_score = None
     if decision_mode == "aggregation" and result.probabilities:
@@ -155,7 +157,9 @@ def result_to_api_dict(pipeline: Pipeline, result: PipelineResult, url: str) -> 
         })
         sr = result.stages.get(stage.stage_id)
         ran = sr is not None
-        threshold = _stage_threshold(stage, decision)
+        margin = _stage_margin(stage, decision)
+        low = FALLBACK_DECISION_BOUNDARY - margin
+        high = FALLBACK_DECISION_BOUNDARY + margin
 
         score = None
         latency_ms = None
@@ -173,7 +177,12 @@ def result_to_api_dict(pipeline: Pipeline, result: PipelineResult, url: str) -> 
             elif stage.stage_id == "domain":
                 extracted.update(explain.domain_evidence((sr.artifacts or {}).get("record")))
 
-        crossed = score is not None and score >= threshold
+        # A score outside the band [low, high] is "confident" — below low clears legitimate,
+        # at/above high flags phishing; in between the stage escalates.
+        exited = score is not None and (score <= low or score >= high)
+        exit_side = None
+        if exited:
+            exit_side = positive if score >= FALLBACK_DECISION_BOUNDARY else negative
         stage_verdict = "phishing" if (score is not None and score >= FALLBACK_DECISION_BOUNDARY) else "legitimate"
         decided = decision_mode == "early-exit" and idx == deciding_idx
 
@@ -184,14 +193,17 @@ def result_to_api_dict(pipeline: Pipeline, result: PipelineResult, url: str) -> 
             "short": meta["short"],
             "info": meta["info"],
             "network": meta["network"],
-            "threshold": threshold,
+            "margin": margin,
+            "bandLow": low,
+            "bandHigh": high,
             "score": sanitize_value(score),
             "latencyMs": latency_ms,
             "ran": ran,
             "skipped": not ran,
             "decided": decided,
             "escalated": ran and not decided,
-            "crossedThreshold": crossed,
+            "exited": exited,
+            "exitSide": exit_side,
             "verdict": stage_verdict,
             "noModel": stage.model_runner is None,
             "error": error,
@@ -236,7 +248,7 @@ def result_to_api_dict(pipeline: Pipeline, result: PipelineResult, url: str) -> 
         "aggregation": decision.fallback_aggregation,
         "aggregateScore": sanitize_value(aggregate_score),
         "overallConfidence": sanitize_value(result.confidence),
-        "threshold": decision.threshold,
+        "margin": decision.margin,
         "positiveLabel": positive,
         "negativeLabel": negative,
         "totalLatencyMs": round(total_latency),

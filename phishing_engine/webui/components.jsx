@@ -47,11 +47,14 @@ function VerdictBanner({ result }) {
         </div>
         <p className="sub">
           {agg ? (
-            <>No stage crossed the <b>{pct(result.threshold)}%</b> threshold — verdict from the{" "}
-            <b>{result.aggregation}</b>-aggregated score (<b>{pct(result.aggregateScore)}% phishing</b>) across all 3 stages.</>
+            <>No stage was confident enough — every probability stayed inside its deferral band, so the
+            verdict comes from the <b>{result.aggregation}</b>-aggregated score{" "}
+            (<b>{pct(result.aggregateScore)}% phishing</b>) across all 3 stages.</>
           ) : (
             <>Decided at <b>Stage {result.decidingStage} · {decider.short}</b> — its phishing probability{" "}
-            <b>{pct(decider.score)}%</b> cleared the <b>{pct(result.threshold)}%</b> threshold
+            <b>{pct(decider.score)}%</b> fell outside the deferral band{" "}
+            <b>[{pct(decider.bandLow)}%, {pct(decider.bandHigh)}%]</b>{" "}
+            ({phishing ? "above the upper edge → phishing" : "below the lower edge → legitimate"})
             {result.decidingStage < 3 ? `, so the remaining ${3 - result.decidingStage} stage${3 - result.decidingStage > 1 ? "s were" : " was"} skipped` : ""}.</>
           )}
         </p>
@@ -77,12 +80,12 @@ function VerdictBanner({ result }) {
 /* ============================================================
    PIPELINE  (stage cards + connectors)
    ============================================================ */
-function Pipeline({ stages, runState, decisionMode, threshold }) {
+function Pipeline({ stages, runState, decisionMode, margin }) {
   return (
     <div className="pipeline">
       {stages.map((st, i) => (
         <React.Fragment key={st.id}>
-          <StageCard stage={st} state={runState[i]} decisionMode={decisionMode} threshold={threshold} />
+          <StageCard stage={st} state={runState[i]} decisionMode={decisionMode} margin={margin} />
           {i < 2 && (
             <div className="pipe-arrow" style={{ left: `calc(${(i+1)*100/3}% - 7px)` }}>
               <Icon name="arrow" width="16" height="16" />
@@ -94,19 +97,31 @@ function Pipeline({ stages, runState, decisionMode, threshold }) {
   );
 }
 
-function StageCard({ stage, state, decisionMode, threshold }) {
+function StageCard({ stage, state, decisionMode, margin }) {
   const done = state === "done";
   const skipped = state === "skipped";
   const isDecider = done && stage.decided;
   const escalated = done && stage.escalated;
   const aggMode = done && decisionMode === "aggregation";
   const v = stage.verdict; // phishing | legitimate
-  const crossed = stage.crossedThreshold;
-  // Each stage can carry its own early-exit threshold; fall back to the pipeline default.
-  const th = stage.threshold != null ? stage.threshold : threshold;
+  // Each stage carries its own deferral band [lo, hi]; fall back to 0.5 ± the pipeline margin.
+  const lo = stage.bandLow != null ? stage.bandLow : 0.5 - margin;
+  const hi = stage.bandHigh != null ? stage.bandHigh : 0.5 + margin;
+  const exited = stage.exited;
+  const flagged = exited && stage.score != null && stage.score >= hi; // outside on the phishing side
   // A stage with no loaded model (or one that errored) extracts/collects but produces no
   // probability — the cascade escalates past it. score comes back null in that case.
   const noScore = stage.score == null;
+
+  // The deferral band drawn on the [0,100%] bar: a shaded "escalate" region between two edges.
+  const bandMarkers = (
+    <>
+      <span className="bar-band" style={{ left: pct(lo) + "%", width: Math.max(0, pct(hi) - pct(lo)) + "%" }}
+        title={`escalate band ${pct(lo)}–${pct(hi)}%`} />
+      <span className="bar-edge" style={{ left: pct(lo) + "%" }} title={`clear legitimate ≤ ${pct(lo)}%`} />
+      <span className="bar-edge" style={{ left: pct(hi) + "%" }} title={`flag phishing ≥ ${pct(hi)}%`} />
+    </>
+  );
 
   return (
     <div className={cls("stage", state, isDecider && "deciding", isDecider && "v-" + v, skipped && "skipped")}>
@@ -138,7 +153,7 @@ function StageCard({ stage, state, decisionMode, threshold }) {
               <span className="label">No model score</span>
             </div>
             <div className="bar">
-              <span className="bar-threshold" style={{ left: pct(th) + "%" }} title={`threshold ${pct(th)}%`} />
+              {bandMarkers}
               <i style={{ width: "0%", background: "var(--accent-ring)" }} />
             </div>
             <div className="bar-foot">
@@ -155,14 +170,16 @@ function StageCard({ stage, state, decisionMode, threshold }) {
               <span className={cls("score-val", "v-" + v)}>{pct(stage.score)}<span className="unit">%</span></span>
             </div>
             <div className="bar">
-              <span className="bar-threshold" style={{ left: pct(th) + "%" }} title={`threshold ${pct(th)}%`} />
+              {bandMarkers}
               <i className={"v-" + v} style={{ width: pct(stage.score) + "%" }} />
             </div>
             <div className="bar-foot">
-              <span className={cls("conf-flag", crossed ? "met" : "unmet")}>
-                {crossed
-                  ? <><Icon name="check" width="11" height="11" /> ≥ {pct(th)}% · decides</>
-                  : <><Icon name="arrow" width="11" height="11" /> &lt; {pct(th)}% · {aggMode ? "aggregated" : "escalate"}</>}
+              <span className={cls("conf-flag", exited ? (flagged ? "phish" : "met") : "unmet")}>
+                {exited
+                  ? (flagged
+                      ? <><Icon name="alert" width="11" height="11" /> ≥ {pct(hi)}% · flags phishing</>
+                      : <><Icon name="check" width="11" height="11" /> ≤ {pct(lo)}% · clears legitimate</>)
+                  : <><Icon name="arrow" width="11" height="11" /> in band · {aggMode ? "aggregated" : "escalate"}</>}
               </span>
               <span>{stage.latencyMs} ms</span>
             </div>
@@ -173,10 +190,10 @@ function StageCard({ stage, state, decisionMode, threshold }) {
               <span className="label">{state === "running" ? "Evaluating…" : "Queued"}</span>
             </div>
             <div className="bar">
-              <span className="bar-threshold" style={{ left: pct(th) + "%" }} />
+              {bandMarkers}
               <i style={{ width: state === "running" ? "40%" : "0%", background: "var(--accent-ring)", transition:"width 1s ease" }} />
             </div>
-            <div className="bar-foot"><span>threshold {pct(th)}%</span><span>{state==="running"?"…":"—"}</span></div>
+            <div className="bar-foot"><span>band {pct(lo)}–{pct(hi)}%</span><span>{state==="running"?"…":"—"}</span></div>
           </>
         )}
       </div>

@@ -43,7 +43,7 @@ function App() {
     setError(null);
     setRunState(["running", "pending", "pending"]);
     // seed live stage shells from meta
-    setLiveStages(meta.map(m => ({ ...m, score: 0, signals: [], latencyMs: 0, verdict: "legitimate", ran: false, skipped: false, decided: false, escalated: false, crossedThreshold: false })));
+    setLiveStages(meta.map(m => ({ ...m, score: 0, signals: [], latencyMs: 0, verdict: "legitimate", ran: false, skipped: false, decided: false, escalated: false, exited: false })));
 
     let res;
     try {
@@ -170,23 +170,23 @@ function App() {
             <span className="hint">
               {phase === "analyzing" ? "Running stages in sequence…"
                 : result.decisionMode === "early-exit"
-                  ? `Stopped at the first stage to clear the ${apct(result.threshold)}% phishing threshold`
-                  : `No stage cleared ${apct(result.threshold)}% — all ran, verdict from ${result.aggregation} aggregation`}
+                  ? `Stopped at the first stage confident outside its deferral band`
+                  : `No stage left its band — all ran, verdict from ${result.aggregation} aggregation`}
             </span>
           </div>
           <Pipeline
             stages={stagesToShow}
             runState={runState}
             decisionMode={result ? result.decisionMode : null}
-            threshold={result ? result.threshold : 0.5}
+            margin={result ? result.margin : 0.4}
           />
         </>
       )}
 
       {/* ---------- details ---------- */}
+      {/* Phishing Indicators (SignalsPanel) hidden for now */}
       {phase === "done" && result && (
         <div className="detail-grid">
-          <SignalsPanel result={result} />
           <ExtractedPanel result={result} />
         </div>
       )}

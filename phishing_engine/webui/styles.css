@@ -298,12 +298,20 @@ input { font-family: inherit; }
 }
 .skip-note svg { flex: none; margin-top: 1px; color: var(--ink-4); }
 
-.bar-threshold {
+/* Deferral band drawn on the score bar: a shaded "escalate" region between two edge ticks.
+   A probability landing inside [low, high] escalates; outside it the stage decides. */
+.bar-band {
+  position: absolute; top: -1px; bottom: -1px; z-index: 0;
+  background: repeating-linear-gradient(
+    -45deg, rgba(120,124,140,.18), rgba(120,124,140,.18) 3px, transparent 3px, transparent 7px);
+  border-radius: 2px;
+}
+.bar-edge {
   position: absolute; top: -2px; bottom: -2px; width: 2px;
-  background: var(--ink-3); border-radius: 2px; z-index: 2;
+  background: var(--ink-3); border-radius: 2px; z-index: 3;
   transform: translateX(-1px);
 }
-.bar-threshold::after {
+.bar-edge::after {
   content: ""; position: absolute; top: -3px; left: -2px;
   width: 6px; height: 6px; border-radius: 99px; background: var(--ink-3);
 }
@@ -353,6 +361,7 @@ input { font-family: inherit; }
 .bar-foot { display: flex; justify-content: space-between; margin-top: 7px; font-size: 11px; color: var(--ink-4); font-variant-numeric: tabular-nums; }
 .conf-flag { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; white-space: nowrap; }
 .conf-flag.met { color: var(--safe-ink); }
+.conf-flag.phish { color: var(--danger-ink); }
 .conf-flag.unmet { color: var(--ink-4); }
 
 .stage-runline { font-size: 10.5px; color: var(--ink-4); margin-top: 9px; height: 13px; }
@@ -363,7 +372,9 @@ input { font-family: inherit; }
 /* ============================================================
    DETAIL GRID: signals + extracted
    ============================================================ */
-.detail-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 18px; align-items: start; }
+/* Single column for now — Phishing Indicators (signals) panel is hidden;
+   restore `1.05fr .95fr` when re-enabling SignalsPanel in app.jsx. */
+.detail-grid { display: grid; grid-template-columns: 1fr; gap: 18px; align-items: start; }
 .card {
   background: var(--surface); border: 1.5px solid var(--border);
   border-radius: var(--r-lg); overflow: hidden;
